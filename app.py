@@ -495,66 +495,120 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
     return {"highlights": highlights}
 
 def create_ass_subtitle_file(words_data: List[Dict], style_config: Dict, output_path: str) -> bool:
-    """Создание ASS файла с караоке-эффектами"""
+    """Создание ASS файла с улучшенной синхронизацией и группировкой"""
     try:
-        # Группировка слов в фразы (3-4 слова максимум)
+        # Параметры группировки
+        MAX_PHRASE_DURATION = 2.5  # Максимум 2.5 секунды на фразу
+        MAX_WORDS_PER_PHRASE = 4   # Максимум 4 слова в фразе
+        MIN_WORDS_PER_PHRASE = 3   # Минимум 3 слова (если возможно)
+        
+        # Динамическая группировка слов
         phrases = []
         current_phrase = []
+        phrase_start_time = None
         
         for word in words_data:
-            current_phrase.append(word)
-            if len(current_phrase) >= 4:  # Максимум 4 слова в фразе
-                phrases.append(current_phrase)
-                current_phrase = []
+            word_start = word.get('start', 0)
+            word_end = word.get('end', 0)
+            word_text = word.get('word', '').strip()
+            
+            if not word_text:
+                continue
+            
+            # Начинаем новую фразу если:
+            # 1. Текущая фраза пустая
+            # 2. Достигли максимума слов
+            # 3. Превысили максимальную длительность
+            if (not current_phrase or 
+                len(current_phrase) >= MAX_WORDS_PER_PHRASE or
+                (phrase_start_time and word_end - phrase_start_time > MAX_PHRASE_DURATION)):
+                
+                # Сохраняем предыдущую фразу (если есть минимум слов)
+                if current_phrase and len(current_phrase) >= MIN_WORDS_PER_PHRASE:
+                    phrases.append(current_phrase)
+                elif current_phrase:
+                    # Если слов меньше минимума, добавляем к следующей фразе
+                    pass
+                
+                # Начинаем новую фразу
+                current_phrase = [word]
+                phrase_start_time = word_start
+            else:
+                current_phrase.append(word)
         
+        # Добавляем последнюю фразу
         if current_phrase:
             phrases.append(current_phrase)
         
-        # Создание ASS контента
+        # Создание ASS контента с улучшенным стилем
         ass_content = f"""[Script Info]
 Title: AgentFlow AI Clips Karaoke
 ScriptType: v4.00+
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},{style_config['bold']},{style_config['italic']},{style_config['underline']},{style_config['strikeout']},{style_config['scalex']},{style_config['scaley']},{style_config['spacing']},{style_config['angle']},{style_config['borderstyle']},{style_config['outline']},{style_config['shadow']},{style_config['alignment']},{style_config['marginl']},{style_config['marginr']},{style_config['marginv']},{style_config['encoding']}
+Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},{style_config['bold']},{style_config['italic']},{style_config['underline']},{style_config['strikeout']},{style_config['scalex']},{style_config['scaley']},{style_config['spacing']},{style_config['angle']},{style_config['borderstyle']},{style_config['outline']},{style_config['shadow']},{style_config['alignment']},{style_config['marginl']},{style_config['marginr']},120,{style_config['encoding']}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         
-        # Добавление событий караоке
-        for phrase in phrases:
+        # Форматирование времени для ASS
+        def format_time(seconds):
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = seconds % 60
+            return f"{hours}:{minutes:02d}:{secs:06.3f}"
+        
+        # Создание событий караоке для каждой фразы
+        for i, phrase in enumerate(phrases):
             if not phrase:
                 continue
                 
             start_time = phrase[0]['start']
             end_time = phrase[-1]['end']
+            phrase_duration = end_time - start_time
             
-            # Форматирование времени для ASS
-            def format_time(seconds):
-                hours = int(seconds // 3600)
-                minutes = int((seconds % 3600) // 60)
-                secs = seconds % 60
-                return f"{hours}:{minutes:02d}:{secs:06.3f}"
+            # Логирование для отладки
+            phrase_text = ' '.join([w.get('word', '').strip() for w in phrase])
+            logger.info(f"📝 Фраза {i+1}: '{phrase_text}' ({phrase_duration:.1f}s, {len(phrase)} слов)")
             
             start_ass = format_time(start_time)
             end_ass = format_time(end_time)
             
-            # Создание караоке-текста
+            # Улучшенная логика караоке
             karaoke_text = ""
-            for i, word in enumerate(phrase):
-                word_duration = (word['end'] - word['start']) * 100  # В сантисекундах
-                karaoke_text += f"{{\\k{int(word_duration)}}}{word['word']}"
-                if i < len(phrase) - 1:
+            total_phrase_duration = phrase_duration
+            
+            for j, word in enumerate(phrase):
+                word_text = word.get('word', '').strip()
+                if not word_text:
+                    continue
+                    
+                # Вычисляем длительность слова
+                word_duration = word['end'] - word['start']
+                
+                # Нормализуем длительность (минимум 0.2 сек, максимум 1.5 сек)
+                word_duration = max(0.2, min(1.5, word_duration))
+                
+                # Конвертируем в сантисекунды для ASS
+                word_duration_cs = int(word_duration * 100)
+                
+                # Добавляем караоке-тег
+                karaoke_text += f"{{\\k{word_duration_cs}}}{word_text}"
+                
+                # Добавляем пробел между словами (кроме последнего)
+                if j < len(phrase) - 1:
                     karaoke_text += " "
             
+            # Добавляем событие в ASS
             ass_content += f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{karaoke_text}\n"
         
         # Сохранение файла
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(ass_content)
         
+        logger.info(f"✅ ASS файл создан: {len(phrases)} фраз, файл: {output_path}")
         return True
         
     except Exception as e:
@@ -628,7 +682,7 @@ def create_clip_with_ass_subtitles(video_path: str, start_time: float, end_time:
 @app.get("/")
 async def root():
     """Главная страница API"""
-    return {"message": "AgentFlow AI Clips API v18.1.7", "status": "running"}
+    return {"message": "AgentFlow AI Clips API v18.1.9", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -643,7 +697,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "version": "18.1.7",
+        "version": "18.1.9",
         "timestamp": datetime.now().isoformat(),
         "system": {
             "memory_usage": f"{memory.percent}%",
@@ -1117,7 +1171,7 @@ async def download_clip(filename: str):
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("🚀 AgentFlow AI Clips v18.1.7 started!")
+    logger.info("🚀 AgentFlow AI Clips v18.1.9 started!")
     logger.info("🎬 ASS караоке-система активирована")
     logger.info("🔥 GPU-ускорение через libass")
     logger.info("⚡ Двухэтапная генерация клипов")
