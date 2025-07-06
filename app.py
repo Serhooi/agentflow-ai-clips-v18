@@ -495,14 +495,9 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
     return {"highlights": highlights}
 
 def create_ass_subtitle_file(words_data: List[Dict], style_config: Dict, output_path: str) -> bool:
-    """Создание ASS файла с улучшенной синхронизацией и группировкой"""
+    """Упрощенная версия создания ASS файла для максимальной совместимости"""
     try:
-        # Параметры группировки
-        MAX_PHRASE_DURATION = 2.5  # Максимум 2.5 секунды на фразу
-        MAX_WORDS_PER_PHRASE = 4   # Максимум 4 слова в фразе
-        MIN_WORDS_PER_PHRASE = 3   # Минимум 3 слова (если возможно)
-        
-        # Динамическая группировка слов
+        # Простая группировка: максимум 3 слова, максимум 2 секунды
         phrases = []
         current_phrase = []
         phrase_start_time = None
@@ -515,114 +510,80 @@ def create_ass_subtitle_file(words_data: List[Dict], style_config: Dict, output_
             if not word_text:
                 continue
             
-            # Начинаем новую фразу если:
-            # 1. Текущая фраза пустая
-            # 2. Достигли максимума слов
-            # 3. Превысили максимальную длительность
+            # Начинаем новую фразу если достигли лимитов
             if (not current_phrase or 
-                len(current_phrase) >= MAX_WORDS_PER_PHRASE or
-                (phrase_start_time and word_end - phrase_start_time > MAX_PHRASE_DURATION)):
+                len(current_phrase) >= 3 or
+                (phrase_start_time and word_end - phrase_start_time > 2.0)):
                 
-                # Сохраняем предыдущую фразу (если есть минимум слов)
-                if current_phrase and len(current_phrase) >= MIN_WORDS_PER_PHRASE:
+                if current_phrase:
                     phrases.append(current_phrase)
-                elif current_phrase:
-                    # Если слов меньше минимума, добавляем к следующей фразе
-                    pass
                 
-                # Начинаем новую фразу
                 current_phrase = [word]
                 phrase_start_time = word_start
             else:
                 current_phrase.append(word)
         
-        # Добавляем последнюю фразу
         if current_phrase:
             phrases.append(current_phrase)
         
-        # Создание ASS контента с улучшенным стилем
-        ass_content = f"""[Script Info]
-Title: AgentFlow AI Clips Karaoke
+        # Создание простого ASS контента
+        ass_content = """[Script Info]
+Title: AgentFlow AI Clips
 ScriptType: v4.00+
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},{style_config['bold']},{style_config['italic']},{style_config['underline']},{style_config['strikeout']},{style_config['scalex']},{style_config['scaley']},{style_config['spacing']},{style_config['angle']},{style_config['borderstyle']},{style_config['outline']},{style_config['shadow']},{style_config['alignment']},{style_config['marginl']},{style_config['marginr']},120,{style_config['encoding']}
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         
-        # Форматирование времени для ASS
+        # Форматирование времени
         def format_time(seconds):
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
             secs = seconds % 60
             return f"{hours}:{minutes:02d}:{secs:06.3f}"
         
-        # Создание событий караоке для каждой фразы
+        # Добавление событий
         for i, phrase in enumerate(phrases):
             if not phrase:
                 continue
                 
             start_time = phrase[0]['start']
             end_time = phrase[-1]['end']
-            phrase_duration = end_time - start_time
-            
-            # Логирование для отладки
-            phrase_text = ' '.join([w.get('word', '').strip() for w in phrase])
-            logger.info(f"📝 Фраза {i+1}: '{phrase_text}' ({phrase_duration:.1f}s, {len(phrase)} слов)")
             
             start_ass = format_time(start_time)
             end_ass = format_time(end_time)
             
-            # Улучшенная логика караоке
-            karaoke_text = ""
-            total_phrase_duration = phrase_duration
+            # Простой текст без караоке (для максимальной совместимости)
+            phrase_text = ' '.join([w.get('word', '').strip() for w in phrase])
+            phrase_text = phrase_text.replace(',', '\\,')  # Экранируем запятые
             
-            for j, word in enumerate(phrase):
-                word_text = word.get('word', '').strip()
-                if not word_text:
-                    continue
-                    
-                # Вычисляем длительность слова
-                word_duration = word['end'] - word['start']
-                
-                # Нормализуем длительность (минимум 0.2 сек, максимум 1.5 сек)
-                word_duration = max(0.2, min(1.5, word_duration))
-                
-                # Конвертируем в сантисекунды для ASS
-                word_duration_cs = int(word_duration * 100)
-                
-                # Добавляем караоке-тег
-                karaoke_text += f"{{\\k{word_duration_cs}}}{word_text}"
-                
-                # Добавляем пробел между словами (кроме последнего)
-                if j < len(phrase) - 1:
-                    karaoke_text += " "
+            ass_content += f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{phrase_text}\n"
             
-            # Добавляем событие в ASS
-            ass_content += f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{karaoke_text}\n"
+            logger.info(f"📝 Фраза {i+1}: '{phrase_text}' ({end_time-start_time:.1f}s)")
         
         # Сохранение файла
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(ass_content)
         
-        logger.info(f"✅ ASS файл создан: {len(phrases)} фраз, файл: {output_path}")
+        logger.info(f"✅ Простой ASS файл создан: {len(phrases)} фраз")
         return True
         
     except Exception as e:
-        logger.error(f"Ошибка создания ASS файла: {e}")
+        logger.error(f"❌ Ошибка создания простого ASS файла: {e}")
         return False
 
 def create_clip_with_ass_subtitles(video_path: str, start_time: float, end_time: float, 
                                  format_id: str, ass_file: str, output_path: str) -> bool:
-    """Создание клипа с ASS субтитрами через двухэтапный процесс"""
+    """Создание клипа с ASS субтитрами - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
     try:
-        # Нормализация format_id (поддержка обоих форматов)
-        format_id = format_id.replace('_', ':')  # Конвертируем 16_9 → 16:9
+        # Нормализация format_id
+        format_id = format_id.replace('_', ':')
         
-        # Определение размеров для разных форматов
+        # Определение размеров
         format_sizes = {
             "9:16": "720:1280",
             "16:9": "1280:720", 
@@ -635,46 +596,80 @@ def create_clip_with_ass_subtitles(video_path: str, start_time: float, end_time:
         
         size = format_sizes[format_id]
         
-        # Этап 1: Создание базового клипа
-        temp_clip = output_path.replace('.mp4', '_temp.mp4')
+        # Проверяем существование ASS файла
+        if not os.path.exists(ass_file):
+            logger.error(f"ASS файл не найден: {ass_file}")
+            return False
         
-        cmd1 = [
+        # Логируем содержимое ASS файла для отладки
+        with open(ass_file, 'r', encoding='utf-8') as f:
+            ass_content = f.read()
+            logger.info(f"📄 ASS файл содержит {len(ass_content)} символов")
+            logger.info(f"📄 Первые 200 символов: {ass_content[:200]}")
+        
+        # ОДНОЭТАПНЫЙ процесс с правильным путем к ASS файлу
+        # Используем абсолютный путь и экранируем специальные символы
+        ass_file_escaped = ass_file.replace(':', '\\:').replace(',', '\\,')
+        
+        cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(start_time),
             '-t', str(end_time - start_time),
-            '-vf', f'scale={size}:force_original_aspect_ratio=increase,crop={size}',
+            '-vf', f'scale={size}:force_original_aspect_ratio=increase,crop={size},ass={ass_file_escaped}',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-c:a', 'aac', '-b:a', '128k',
-            '-y', temp_clip
-        ]
-        
-        result1 = subprocess.run(cmd1, capture_output=True, text=True, check=True)
-        
-        if not os.path.exists(temp_clip):
-            raise Exception("Не удалось создать базовый клип")
-        
-        # Этап 2: Добавление ASS субтитров
-        cmd2 = [
-            'ffmpeg', '-i', temp_clip,
-            '-vf', f'ass={ass_file}',
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'copy',
+            '-avoid_negative_ts', 'make_zero',  # Исправляет проблемы с временными метками
             '-y', output_path
         ]
         
-        result2 = subprocess.run(cmd2, capture_output=True, text=True, check=True)
+        logger.info(f"🎬 Выполняю FFmpeg команду: {' '.join(cmd)}")
         
-        # Очистка временного файла
-        if os.path.exists(temp_clip):
-            os.remove(temp_clip)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        return os.path.exists(output_path)
+        # Проверяем результат
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            logger.info(f"✅ Клип создан: {output_path} ({file_size} байт)")
+            
+            # Проверяем есть ли субтитры в результирующем видео
+            check_cmd = ['ffprobe', '-v', 'quiet', '-select_streams', 's', '-show_entries', 'stream=index', '-of', 'csv=p=0', output_path]
+            check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+            
+            if check_result.stdout.strip():
+                logger.info("✅ Субтитры успешно встроены в видео")
+            else:
+                logger.warning("⚠️ Субтитры могут быть не встроены (проверьте визуально)")
+            
+            return True
+        else:
+            logger.error("❌ Выходной файл не создан")
+            return False
         
     except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка FFmpeg: {e.stderr}")
-        return False
+        logger.error(f"❌ Ошибка FFmpeg: {e.stderr}")
+        logger.error(f"❌ Команда: {' '.join(e.cmd)}")
+        
+        # Пробуем альтернативный метод без ASS
+        logger.info("🔄 Пробуем создать клип без субтитров как fallback...")
+        try:
+            fallback_cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(end_time - start_time),
+                '-vf', f'scale={size}:force_original_aspect_ratio=increase,crop={size}',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-y', output_path
+            ]
+            subprocess.run(fallback_cmd, capture_output=True, text=True, check=True)
+            logger.info("✅ Fallback клип создан (без субтитров)")
+            return True
+        except:
+            logger.error("❌ Даже fallback не сработал")
+            return False
+            
     except Exception as e:
-        logger.error(f"Ошибка создания клипа: {e}")
+        logger.error(f"❌ Общая ошибка: {e}")
         return False
 
 # API Endpoints
@@ -682,7 +677,7 @@ def create_clip_with_ass_subtitles(video_path: str, start_time: float, end_time:
 @app.get("/")
 async def root():
     """Главная страница API"""
-    return {"message": "AgentFlow AI Clips API v18.1.9", "status": "running"}
+    return {"message": "AgentFlow AI Clips API v18.2.0", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -697,7 +692,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "version": "18.1.9",
+        "version": "18.2.0",
         "timestamp": datetime.now().isoformat(),
         "system": {
             "memory_usage": f"{memory.percent}%",
@@ -1171,7 +1166,7 @@ async def download_clip(filename: str):
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("🚀 AgentFlow AI Clips v18.1.9 started!")
+    logger.info("🚀 AgentFlow AI Clips v18.2.0 started!")
     logger.info("🎬 ASS караоке-система активирована")
     logger.info("🔥 GPU-ускорение через libass")
     logger.info("⚡ Двухэтапная генерация клипов")
