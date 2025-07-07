@@ -1,30 +1,34 @@
-# AgentFlow AI Clips v19.2.0 - МИНИМАЛЬНЫЕ зависимости БЕЗ Gradio
-# Только то что РЕАЛЬНО нужно для работы
+# AgentFlow AI Clips v20.0.0 - По рекомендациям ChatGPT
+# Основано на setup.py оригинального ShortGPT + недостающие пакеты
 
-# FastAPI для нашего API
-fastapi
-uvicorn
-python-multipart
+# FastAPI для нашего API (БЕЗ конфликтов с Gradio)
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
 
-# Основные зависимости для ShortGPT (МИНИМУМ)
+# ShortGPT зависимости (ТОЧНО из setup.py)
 python-dotenv
-openai
+openai==1.37.2
 tiktoken
 tinydb
 tinymongo
 proglog
-
-# Видео/аудио обработка
 yt-dlp
 torch
 torchaudio
 whisper-timestamped
-moviepy
-pillow
-edge-tts
-
-# Утилиты
+pillow==10.4.0
+moviepy==2.1.2
 progress
 questionary
-pydantic
+edge-tts
+
+# Недостающие пакеты (найденные в ошибках)
+pyyaml
+protobuf==3.20.3
+
+# БЕЗ Gradio и gradio_client - они конфликтуют с FastAPI!
+# БЕЗ supabase - конфликтует с httpx
+# БЕЗ жестких версий httpx - пусть pip сам выберет совместимую
 
