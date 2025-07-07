@@ -27,13 +27,14 @@ from openai import OpenAI
 import whisperx
 import torch
 
-# Supabase Storage интеграция
+# Supabase (опционально)
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
+    logger.info("📦 Supabase доступен (опционально)")
 except ImportError:
     SUPABASE_AVAILABLE = False
-    logger.warning("Supabase не установлен")
+    logger.warning("⚠️ Supabase не установлен - используется локальное хранение")
 
 # Настройка логирования
 logging.basicConfig(

@@ -29,12 +29,8 @@ python-dotenv==1.0.0
 requests==2.31.0
 psutil==5.9.6
 
-# Supabase (опционально) - совместимая версия без конфликтов
-supabase==2.0.4
-httpx>=0.24.0,<0.26.0
-postgrest>=0.13.0,<0.15.0
-
 # Дополнительные зависимости для стабильности
-pydantic>=2.1.0,<3.0.0
 typing-extensions>=4.0.0
 
+# FFmpeg для burned-in видео
+ffmpeg-python==0.2.0
