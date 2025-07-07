@@ -1,4 +1,4 @@
-# AgentFlow AI Clips v19.0.0 - ShortGPT Integration
+# AgentFlow AI Clips v19.0.2 - ShortGPT Integration (Cache Bypass)
 FROM python:3.11-slim
 
 # Устанавливаем системные зависимости
