@@ -1,17 +1,19 @@
-# AgentFlow AI Clips v19.0.0 - ShortGPT Integration
+# AgentFlow AI Clips v19.0.0 - ShortGPT Integration (Fixed Dependencies)
 
 # FastAPI
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# ShortGPT dependencies
+# Core dependencies with compatible versions
 python-dotenv==1.0.0
-openai==1.37.0
-httpx==0.27.2
+openai>=1.35.0
+httpx>=0.24.0,<0.26.0
 tiktoken==0.5.2
 tinydb==4.8.0
 proglog==0.1.10
+
+# Video/Audio processing
 yt-dlp>=2025.1.12
 torch==2.1.0
 torchaudio==2.1.0
@@ -32,6 +34,7 @@ progress==1.6
 questionary==2.0.1
 pydantic==2.5.0
 
-# Optional: Supabase integration
-supabase==2.3.4
+# Optional: Supabase integration (compatible version)
+supabase>=2.0.0,<2.4.0
+
 
