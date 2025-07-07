@@ -29,6 +29,10 @@ python-dotenv==1.0.0
 requests==2.31.0
 psutil==5.9.6
 
+# Supabase для хранения видео
+supabase==1.0.4
+httpx==0.24.1
+
 # Дополнительные зависимости для стабильности
 typing-extensions>=4.0.0
 
