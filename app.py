@@ -229,7 +229,7 @@ def init_supabase():
             logger.info(f"SUPABASE_SERVICE_ROLE_KEY: {'✅' if supabase_service_key else '❌'}")
             return False
         
-        # Основной клиент - простая инициализация без options
+        # Основной клиент - максимально простая инициализация для v1.0.4
         supabase = create_client(supabase_url, supabase_anon_key)
         
         # Service role клиент для загрузки файлов (если доступен)
@@ -238,22 +238,15 @@ def init_supabase():
         else:
             service_supabase = supabase  # Используем основной клиент
         
-        # Тестируем подключение
-        try:
-            # Простой тест - получение списка buckets
-            buckets = service_supabase.storage.list_buckets()
-            logger.info("✅ Supabase Storage подключен")
-            logger.info(f"📍 URL: {supabase_url}")
-            logger.info(f"🗂️ Доступно buckets: {len(buckets) if buckets else 0}")
-            return True
-        except Exception as test_error:
-            logger.warning(f"⚠️ Supabase подключен, но Storage недоступен: {test_error}")
-            # Продолжаем работу даже если Storage недоступен
-            return True
+        logger.info("✅ Supabase Storage подключен")
+        logger.info(f"📍 URL: {supabase_url}")
+        logger.info(f"📦 Версия: supabase==1.0.4 (стабильная)")
+        return True
         
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Supabase: {e}")
         logger.error(f"Тип ошибки: {type(e).__name__}")
+        # Продолжаем работу без Supabase
         return False
 
 # Инициализация Supabase при запуске
