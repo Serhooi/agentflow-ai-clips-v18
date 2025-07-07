@@ -23,6 +23,13 @@ from pydantic import BaseModel
 import openai
 from openai import OpenAI
 
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("app")
+
 # WhisperX для улучшенных субтитров
 import whisperx
 import torch
@@ -35,13 +42,6 @@ try:
 except ImportError:
     SUPABASE_AVAILABLE = False
     logger.warning("⚠️ Supabase не установлен - используется локальное хранение")
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("app")
 
 # Инициализация FastAPI
 app = FastAPI(
