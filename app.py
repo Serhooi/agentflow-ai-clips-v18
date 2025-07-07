@@ -203,7 +203,7 @@ supabase = None
 service_supabase = None
 SUPABASE_BUCKET = "video-results"
 
-# WhisperX модели (глобальные для переиспользования)
+# WhisperX модели (ленивая загрузка для экономии памяти)
 whisperx_model = None
 align_model = None
 align_metadata = None
@@ -226,10 +226,10 @@ def init_supabase():
             logger.warning("⚠️ Не все Supabase переменные настроены")
             return False
         
-        # Основной клиент
+        # Основной клиент (без proxy аргумента)
         supabase = create_client(supabase_url, supabase_anon_key)
         
-        # Service role клиент для загрузки файлов
+        # Service role клиент для загрузки файлов (без proxy аргумента)
         service_supabase = create_client(supabase_url, supabase_service_key)
         
         logger.info("✅ Supabase Storage подключен")
@@ -242,20 +242,23 @@ def init_supabase():
 # Инициализация Supabase при запуске
 supabase_available = init_supabase()
 
-def init_whisperx():
-    """Инициализация WhisperX моделей"""
+def load_whisperx_models():
+    """Ленивая загрузка WhisperX моделей (только при необходимости)"""
     global whisperx_model, align_model, align_metadata, whisperx_available
+    
+    if whisperx_available and whisperx_model is not None:
+        return True  # Уже загружены
     
     try:
         # Определяем устройство (CPU для Render.com)
         device = "cpu"
         compute_type = "int8"  # Для CPU оптимизации
         
-        logger.info("🔄 Загрузка WhisperX модели...")
+        logger.info("🔄 Ленивая загрузка WhisperX модели...")
         
-        # Загружаем основную модель WhisperX
+        # Загружаем основную модель WhisperX (маленькая модель для экономии памяти)
         whisperx_model = whisperx.load_model(
-            "base", 
+            "tiny",  # Используем tiny модель вместо base для экономии памяти
             device=device, 
             compute_type=compute_type,
             language="ru"  # Русский язык по умолчанию
@@ -278,8 +281,7 @@ def init_whisperx():
         whisperx_available = False
         return False
 
-# Инициализация WhisperX при запуске
-init_whisperx()
+# НЕ загружаем WhisperX при старте приложения (ленивая загрузка)
 
 # Pydantic модели
 class VideoAnalysisRequest(BaseModel):
@@ -391,65 +393,68 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
     """Улучшенная транскрибация аудио с WhisperX для word-level таймингов"""
     global whisperx_model, align_model, align_metadata, whisperx_available
     
-    # Сначала пробуем WhisperX
-    if whisperx_available and whisperx_model:
-        try:
-            logger.info("🔄 Загрузка аудио для WhisperX...")
-            
-            # Загружаем аудио
-            audio = whisperx.load_audio(audio_path)
-            
-            logger.info("🔄 Транскрибация с WhisperX...")
-            
-            # Транскрибация
-            result = whisperx_model.transcribe(audio, batch_size=16)
-            
-            logger.info("🔄 Выравнивание для word-level таймингов...")
-            
-            # Выравнивание для получения word-level таймингов
-            if align_model and align_metadata:
-                result = whisperx.align(
-                    result["segments"], 
-                    align_model, 
-                    align_metadata, 
-                    audio, 
-                    device="cpu"
-                )
-            
-            # Форматируем результат в нужную структуру
-            formatted_result = {
-                "text": result.get("text", ""),
-                "segments": []
+    # Ленивая загрузка WhisperX моделей
+    if not load_whisperx_models():
+        logger.error("❌ Не удалось загрузить WhisperX модели")
+        return None
+    
+    try:
+        logger.info("🔄 Загрузка аудио для WhisperX...")
+        
+        # Загружаем аудио
+        audio = whisperx.load_audio(audio_path)
+        
+        logger.info("🔄 Транскрибация с WhisperX...")
+        
+        # Транскрибация
+        result = whisperx_model.transcribe(audio, batch_size=8)  # Уменьшили batch_size
+        
+        logger.info("🔄 Выравнивание для word-level таймингов...")
+        
+        # Выравнивание для получения word-level таймингов
+        if align_model and align_metadata:
+            result = whisperx.align(
+                result["segments"], 
+                align_model, 
+                align_metadata, 
+                audio, 
+                device="cpu"
+            )
+        
+        # Форматируем результат в нужную структуру
+        formatted_result = {
+            "text": result.get("text", ""),
+            "segments": []
+        }
+        
+        for segment in result.get("segments", []):
+            formatted_segment = {
+                "id": segment.get("id", 0),
+                "start": segment.get("start", 0.0),
+                "end": segment.get("end", 0.0),
+                "text": segment.get("text", ""),
+                "words": []
             }
             
-            for segment in result.get("segments", []):
-                formatted_segment = {
-                    "id": segment.get("id", 0),
-                    "start": segment.get("start", 0.0),
-                    "end": segment.get("end", 0.0),
-                    "text": segment.get("text", ""),
-                    "words": []
-                }
-                
-                # Добавляем word-level тайминги если доступны
-                if "words" in segment:
-                    for word in segment["words"]:
-                        formatted_word = {
-                            "word": word.get("word", ""),
-                            "start": word.get("start", 0.0),
-                            "end": word.get("end", 0.0),
-                            "score": word.get("score", 1.0)
-                        }
-                        formatted_segment["words"].append(formatted_word)
-                
-                formatted_result["segments"].append(formatted_segment)
+            # Добавляем word-level тайминги если доступны
+            if "words" in segment:
+                for word in segment["words"]:
+                    formatted_word = {
+                        "word": word.get("word", ""),
+                        "start": word.get("start", 0.0),
+                        "end": word.get("end", 0.0),
+                        "score": word.get("score", 1.0)
+                    }
+                    formatted_segment["words"].append(formatted_word)
             
-            logger.info(f"✅ WhisperX транскрибация завершена: {len(formatted_result['segments'])} сегментов")
-            return formatted_result
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка WhisperX транскрибации: {e}")
-            logger.warning("⚠️ Переключаемся на OpenAI Whisper API fallback")
+            formatted_result["segments"].append(formatted_segment)
+        
+        logger.info(f"✅ WhisperX транскрибация завершена: {len(formatted_result['segments'])} сегментов")
+        return formatted_result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка WhisperX транскрибации: {e}")
+        logger.warning("⚠️ Переключаемся на OpenAI Whisper API fallback")
     
     # Fallback на OpenAI Whisper API
     try:
