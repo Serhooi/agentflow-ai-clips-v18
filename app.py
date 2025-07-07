@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
 # ShortGPT imports
-sys.path.append('/home/ubuntu/ShortGPT')
+sys.path.append('/app/ShortGPT')
 from shortGPT.engine.content_short_engine import ContentShortEngine
 from shortGPT.audio.voice_module import VoiceModule
 from shortGPT.config.languages import Language
