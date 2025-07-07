@@ -1,13 +1,13 @@
-# AgentFlow AI Clips v20.0.0 - По рекомендациям ChatGPT
-# Основано на setup.py оригинального ShortGPT + недостающие пакеты
+# AgentFlow AI Clips v20.1.0 - ПОЛНЫЙ requirements.txt
+# Добавляем ВСЕ что может понадобиться ShortGPT
 
-# FastAPI для нашего API (БЕЗ конфликтов с Gradio)
+# FastAPI для нашего API
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
 
-# ShortGPT зависимости (ТОЧНО из setup.py)
+# ShortGPT основные зависимости (из setup.py)
 python-dotenv
 openai==1.37.2
 tiktoken
@@ -28,7 +28,68 @@ edge-tts
 pyyaml
 protobuf==3.20.3
 
-# БЕЗ Gradio и gradio_client - они конфликтуют с FastAPI!
-# БЕЗ supabase - конфликтует с httpx
-# БЕЗ жестких версий httpx - пусть pip сам выберет совместимую
+# НОВЫЕ отсутствующие пакеты
+pandas
+numpy
+scipy
+
+# Дополнительные пакеты которые могут понадобиться
+requests
+beautifulsoup4
+matplotlib
+seaborn
+lxml
+openpyxl
+xlsxwriter
+Pillow
+imageio
+scikit-learn
+nltk
+spacy
+transformers
+datasets
+accelerate
+librosa
+soundfile
+ffmpeg-python
+opencv-python
+psutil
+memory-profiler
+colorama
+rich
+typer
+click
+jinja2
+aiofiles
+httpx
+aiohttp
+websockets
+
+# Утилиты для работы с файлами
+pathlib
+glob2
+shutil
+
+# Для работы с API
+boto3
+google-cloud-storage
+azure-storage-blob
+
+# Для обработки изображений/видео
+imageio-ffmpeg
+av
+decord
+
+# Для работы с базами данных
+sqlalchemy
+pymongo
+redis
+
+# Для логирования и мониторинга
+loguru
+sentry-sdk
+
+# БЕЗ конфликтующих пакетов:
+# - gradio, gradio_client (конфликт с FastAPI)
+# - supabase (конфликт с httpx)
 
