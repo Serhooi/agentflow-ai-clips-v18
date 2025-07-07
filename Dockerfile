@@ -14,6 +14,7 @@ WORKDIR /app
 
 # Копируем requirements и устанавливаем зависимости
 COPY requirements.txt .
+# Принудительный сброс кэша для tinymongo v19.0.4
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Клонируем ShortGPT
