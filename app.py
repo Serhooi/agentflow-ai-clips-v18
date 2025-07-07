@@ -222,21 +222,43 @@ def init_supabase():
         supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
         supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         
-        if not all([supabase_url, supabase_anon_key, supabase_service_key]):
-            logger.warning("⚠️ Не все Supabase переменные настроены")
+        if not all([supabase_url, supabase_anon_key]):
+            logger.warning("⚠️ Не все обязательные Supabase переменные настроены")
+            logger.info(f"SUPABASE_URL: {'✅' if supabase_url else '❌'}")
+            logger.info(f"SUPABASE_ANON_KEY: {'✅' if supabase_anon_key else '❌'}")
+            logger.info(f"SUPABASE_SERVICE_ROLE_KEY: {'✅' if supabase_service_key else '❌'}")
             return False
         
-        # Основной клиент (без proxy аргумента)
-        supabase = create_client(supabase_url, supabase_anon_key)
+        # Основной клиент с правильными опциями
+        supabase = create_client(
+            supabase_url, 
+            supabase_anon_key,
+            options={
+                "auto_refresh_token": True,
+                "persist_session": True
+            }
+        )
         
-        # Service role клиент для загрузки файлов (без proxy аргумента)
-        service_supabase = create_client(supabase_url, supabase_service_key)
+        # Service role клиент для загрузки файлов (если доступен)
+        if supabase_service_key:
+            service_supabase = create_client(
+                supabase_url, 
+                supabase_service_key,
+                options={
+                    "auto_refresh_token": False,
+                    "persist_session": False
+                }
+            )
+        else:
+            service_supabase = supabase  # Используем основной клиент
         
         logger.info("✅ Supabase Storage подключен")
+        logger.info(f"📍 URL: {supabase_url}")
         return True
         
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Supabase: {e}")
+        logger.error(f"Тип ошибки: {type(e).__name__}")
         return False
 
 # Инициализация Supabase при запуске
