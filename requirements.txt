@@ -30,3 +30,7 @@ supabase==2.3.4
 faster-whisper==0.10.0
 transformers==4.35.2
 
+
+# FFmpeg для burned-in видео
+ffmpeg-python==0.2.0
+

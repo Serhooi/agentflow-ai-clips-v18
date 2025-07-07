@@ -1,0 +1,312 @@
+/* SubtitlePlayer.css - Стили для караоке-субтитров в стиле Opus.pro */
+
+/* Основной контейнер субтитров */
+.subtitle-player {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  pointer-events: none;
+  font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Позиционирование */
+.subtitle-bottom {
+  bottom: 20px;
+}
+
+.subtitle-top {
+  top: 20px;
+}
+
+.subtitle-center {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Размеры шрифта */
+.subtitle-small {
+  font-size: 16px;
+}
+
+.subtitle-medium {
+  font-size: 20px;
+}
+
+.subtitle-large {
+  font-size: 24px;
+}
+
+/* Контейнер для текста */
+.subtitle-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0 20px;
+}
+
+/* Сегмент субтитров */
+.subtitle-segment {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 8px;
+  max-width: 80%;
+  word-wrap: break-word;
+  transition: all 0.3s ease-in-out;
+}
+
+/* Фон для субтитров */
+.with-background .subtitle-segment {
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.no-background .subtitle-segment {
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Активный сегмент */
+.active-segment {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Стили слов */
+.subtitle-word {
+  display: inline;
+  margin-right: 0.3em;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+}
+
+.subtitle-word:last-child {
+  margin-right: 0;
+}
+
+/* Подсвеченное слово (караоке-эффект) */
+.subtitle-word.highlighted {
+  font-weight: 700;
+  transform: scale(1.05);
+  text-shadow: 0 0 8px currentColor;
+  animation: wordHighlight 0.2s ease-in-out;
+}
+
+@keyframes wordHighlight {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+
+/* Активное слово (в данный момент произносится) */
+.subtitle-word.active {
+  animation: wordPulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes wordPulse {
+  from {
+    opacity: 0.8;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Прогресс бар сегмента */
+.subtitle-progress {
+  position: relative;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  margin-top: 8px;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.subtitle-progress-bar {
+  height: 100%;
+  background: #FFD700;
+  transition: width 0.1s linear;
+  border-radius: 1px;
+}
+
+/* Стили для разных тем */
+
+/* Современный стиль (по умолчанию) */
+.subtitle-modern .subtitle-segment {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.subtitle-modern .subtitle-word.highlighted {
+  background: linear-gradient(45deg, #FFD700, #FFA500);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Классический стиль */
+.subtitle-classic .subtitle-segment {
+  background: rgba(0, 0, 0, 0.9) !important;
+  border: 2px solid #FFD700;
+}
+
+.subtitle-classic .subtitle-word.highlighted {
+  color: #FFD700 !important;
+  text-decoration: underline;
+}
+
+/* Неоновый стиль */
+.subtitle-neon .subtitle-segment {
+  background: rgba(0, 0, 0, 0.7) !important;
+  border: 1px solid #00FFFF;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.subtitle-neon .subtitle-word.highlighted {
+  color: #00FFFF !important;
+  text-shadow: 0 0 10px #00FFFF, 0 0 20px #00FFFF;
+  animation: neonGlow 1s ease-in-out infinite alternate;
+}
+
+@keyframes neonGlow {
+  from {
+    text-shadow: 0 0 10px #00FFFF, 0 0 20px #00FFFF;
+  }
+  to {
+    text-shadow: 0 0 15px #00FFFF, 0 0 30px #00FFFF, 0 0 40px #00FFFF;
+  }
+}
+
+/* Минималистичный стиль */
+.subtitle-minimal .subtitle-segment {
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.subtitle-minimal .subtitle-word.highlighted {
+  font-weight: 800;
+  transform: none;
+  text-shadow: none;
+}
+
+/* Адаптивность для мобильных устройств */
+@media (max-width: 768px) {
+  .subtitle-player {
+    bottom: 10px;
+  }
+  
+  .subtitle-small {
+    font-size: 14px;
+  }
+  
+  .subtitle-medium {
+    font-size: 16px;
+  }
+  
+  .subtitle-large {
+    font-size: 18px;
+  }
+  
+  .subtitle-container {
+    padding: 0 10px;
+  }
+  
+  .subtitle-segment {
+    max-width: 90%;
+    padding: 6px 12px;
+  }
+}
+
+/* Анимации для плавного появления/исчезновения */
+.subtitle-enter {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.subtitle-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.3s ease-in-out;
+}
+
+.subtitle-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.subtitle-exit-active {
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: all 0.3s ease-in-out;
+}
+
+/* Специальные эффекты для Opus.pro стиля */
+.subtitle-opus-style .subtitle-word.highlighted {
+  background: linear-gradient(90deg, #FF6B6B, #4ECDC4, #45B7D1, #96CEB4, #FFEAA7);
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 2s ease-in-out infinite;
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Эффект печатной машинки для появления слов */
+.subtitle-typewriter .subtitle-word {
+  opacity: 0;
+  animation: typewriter 0.1s ease-in-out forwards;
+}
+
+@keyframes typewriter {
+  to {
+    opacity: 1;
+  }
+}
+
+/* Волновой эффект для слов */
+.subtitle-wave .subtitle-word.highlighted {
+  animation: wave 0.6s ease-in-out;
+}
+
+@keyframes wave {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-3px);
+  }
+  75% {
+    transform: translateY(3px);
+  }
+}
+

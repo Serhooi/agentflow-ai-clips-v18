@@ -1453,15 +1453,461 @@ async def download_clip(filename: str):
         filename=filename
     )
 
+# ASS субтитры endpoints
+@app.post("/api/subtitles/generate-ass")
+async def generate_ass_subtitles(
+    video_id: str,
+    karaoke_mode: bool = True,
+    effect_type: str = "highlight",
+    style_name: str = "modern"
+):
+    """
+    Генерирует ASS субтитры с караоке-эффектами
+    
+    Args:
+        video_id: ID видео
+        karaoke_mode: Включить караоке-эффекты
+        effect_type: Тип эффекта (highlight, glow, wave, typewriter)
+        style_name: Стиль субтитров (modern, neon, fire)
+    """
+    try:
+        # Проверяем существование видео
+        if video_id not in video_tasks:
+            raise HTTPException(status_code=404, detail="Видео не найдено")
+        
+        video_task = video_tasks[video_id]
+        
+        if video_task["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Видео еще не обработано")
+        
+        # Получаем данные субтитров
+        subtitle_data = video_task.get("subtitle_data")
+        if not subtitle_data:
+            raise HTTPException(status_code=400, detail="Субтитры не найдены")
+        
+        # Создаем директорию для ASS файлов
+        os.makedirs(Config.ASS_DIR, exist_ok=True)
+        
+        # Генерируем ASS файл
+        ass_filename = f"{video_id}_karaoke.ass"
+        ass_path = os.path.join(Config.ASS_DIR, ass_filename)
+        
+        # Применяем выбранный стиль
+        if style_name in Config.ASS_STYLES:
+            style_config = Config.ASS_STYLES[style_name]
+            ass_generator.karaoke_style.update({
+                'font_name': style_config['fontname'],
+                'font_size': style_config['fontsize'],
+                'primary_color': style_config['primarycolor'],
+                'secondary_color': style_config['secondarycolor']
+            })
+        
+        # Генерируем ASS файл
+        generated_path = ass_generator.generate_ass_from_whisperx(
+            subtitle_data,
+            ass_path,
+            karaoke_mode=karaoke_mode
+        )
+        
+        # Генерируем SRT для совместимости
+        srt_filename = f"{video_id}_subtitles.srt"
+        srt_path = os.path.join(Config.ASS_DIR, srt_filename)
+        srt_generated_path = ass_generator.generate_srt_from_whisperx(
+            subtitle_data,
+            srt_path
+        )
+        
+        logger.info(f"ASS субтитры созданы: {generated_path}")
+        logger.info(f"SRT субтитры созданы: {srt_generated_path}")
+        
+        return {
+            "success": True,
+            "ass_file": ass_filename,
+            "srt_file": srt_filename,
+            "download_urls": {
+                "ass": f"/api/subtitles/download/{ass_filename}",
+                "srt": f"/api/subtitles/download/{srt_filename}"
+            },
+            "style": style_name,
+            "karaoke_mode": karaoke_mode,
+            "effect_type": effect_type
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка генерации ASS субтитров: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка генерации субтитров: {str(e)}")
+
+@app.get("/api/subtitles/download/{filename}")
+async def download_subtitles(filename: str):
+    """Скачивание ASS/SRT субтитров"""
+    file_path = os.path.join(Config.ASS_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Файл субтитров не найден")
+    
+    # Определяем MIME тип
+    if filename.endswith('.ass'):
+        media_type = "text/plain"
+    elif filename.endswith('.srt'):
+        media_type = "text/plain"
+    else:
+        media_type = "application/octet-stream"
+    
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=filename
+    )
+
+@app.get("/api/subtitles/styles")
+async def get_subtitle_styles():
+    """Получить доступные стили субтитров"""
+    return {
+        "styles": {
+            name: {
+                "name": config["name"],
+                "fontname": config["fontname"],
+                "preview_colors": config.get("preview_colors", ["#ffffff", "#00ff00", "#000000"])
+            }
+            for name, config in Config.ASS_STYLES.items()
+        }
+    }
+
+@app.get("/api/subtitles/preview/{video_id}")
+async def preview_subtitles(video_id: str, style_name: str = "modern"):
+    """Предварительный просмотр субтитров"""
+    try:
+        if video_id not in video_tasks:
+            raise HTTPException(status_code=404, detail="Видео не найдено")
+        
+        video_task = video_tasks[video_id]
+        subtitle_data = video_task.get("subtitle_data")
+        
+        if not subtitle_data:
+            raise HTTPException(status_code=400, detail="Субтитры не найдены")
+        
+        # Берем первые 3 сегмента для предварительного просмотра
+        segments = subtitle_data.get("segments", [])[:3]
+        
+        preview_data = {
+            "style": style_name,
+            "segments": segments,
+            "style_config": Config.ASS_STYLES.get(style_name, Config.ASS_STYLES["modern"])
+        }
+        
+        return preview_data
+        
+    except Exception as e:
+        logger.error(f"Ошибка предварительного просмотра: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("🚀 AgentFlow AI Clips v18.3.0 started!")
-    logger.info("🎬 ASS караоке-система активирована")
-    logger.info("🔥 GPU-ускорение через libass")
+    logger.info("🚀 AgentFlow AI Clips v20.1.0 started!")
+    logger.info("🎬 WhisperX + ASS караоке-система активирована")
+    logger.info("🔥 Продвинутые субтитры как в Opus.pro")
     logger.info("⚡ Двухэтапная генерация клипов")
     
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+
+
+# Импорт видео бернера
+from video_burner import VideoBurner
+
+# Инициализация видео бернера
+video_burner = VideoBurner()
+
+# Burned-in видео endpoints
+@app.post("/api/videos/burn-subtitles")
+async def burn_subtitles_to_video(
+    video_id: str,
+    quality: str = "high",
+    style_name: str = "modern",
+    include_preview: bool = True
+):
+    """
+    Создает видео с вшитыми субтитрами
+    
+    Args:
+        video_id: ID видео
+        quality: Качество видео (low, medium, high, ultra)
+        style_name: Стиль субтитров
+        include_preview: Создать превью
+    """
+    try:
+        # Проверяем существование видео
+        if video_id not in video_tasks:
+            raise HTTPException(status_code=404, detail="Видео не найдено")
+        
+        video_task = video_tasks[video_id]
+        
+        if video_task["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Видео еще не обработано")
+        
+        # Получаем путь к оригинальному видео
+        original_video_path = video_task.get("file_path")
+        if not original_video_path or not os.path.exists(original_video_path):
+            raise HTTPException(status_code=400, detail="Оригинальное видео не найдено")
+        
+        # Создаем ASS субтитры если их нет
+        ass_dir = Config.ASS_DIR
+        os.makedirs(ass_dir, exist_ok=True)
+        
+        ass_filename = f"{video_id}_karaoke.ass"
+        ass_path = os.path.join(ass_dir, ass_filename)
+        
+        # Генерируем ASS файл если его нет
+        if not os.path.exists(ass_path):
+            subtitle_data = video_task.get("subtitle_data")
+            if not subtitle_data:
+                raise HTTPException(status_code=400, detail="Субтитры не найдены")
+            
+            # Применяем стиль
+            if style_name in Config.ASS_STYLES:
+                style_config = Config.ASS_STYLES[style_name]
+                ass_generator.karaoke_style.update({
+                    'font_name': style_config['fontname'],
+                    'font_size': style_config['fontsize'],
+                    'primary_color': style_config['primarycolor'],
+                    'secondary_color': style_config['secondarycolor']
+                })
+            
+            ass_generator.generate_ass_from_whisperx(
+                subtitle_data,
+                ass_path,
+                karaoke_mode=True
+            )
+        
+        # Создаем директорию для burned-in видео
+        burned_dir = "burned_videos"
+        os.makedirs(burned_dir, exist_ok=True)
+        
+        # Создаем burned-in видео
+        burned_filename = f"{video_id}_burned_{quality}.mp4"
+        burned_path = os.path.join(burned_dir, burned_filename)
+        
+        # Запускаем создание видео с субтитрами
+        logger.info(f"Создание видео с субтитрами: {burned_path}")
+        
+        def progress_callback(progress):
+            # Обновляем прогресс в задаче
+            video_task["burn_progress"] = progress
+            logger.info(f"Прогресс создания видео: {progress:.1f}%")
+        
+        # Создаем видео с субтитрами
+        result_path = video_burner.burn_subtitles(
+            original_video_path,
+            ass_path,
+            burned_path,
+            quality=quality,
+            progress_callback=progress_callback
+        )
+        
+        response_data = {
+            "success": True,
+            "burned_video": burned_filename,
+            "download_url": f"/api/videos/download-burned/{burned_filename}",
+            "quality": quality,
+            "style": style_name,
+            "file_size": os.path.getsize(result_path) if os.path.exists(result_path) else 0
+        }
+        
+        # Создаем превью если запрошено
+        if include_preview:
+            try:
+                preview_filename = f"{video_id}_preview_{quality}.mp4"
+                preview_path = os.path.join(burned_dir, preview_filename)
+                
+                preview_result = video_burner.create_preview_video(
+                    original_video_path,
+                    ass_path,
+                    preview_path,
+                    start_time=10,  # Начинаем с 10 секунды
+                    duration=15     # 15 секунд превью
+                )
+                
+                response_data["preview"] = {
+                    "filename": preview_filename,
+                    "download_url": f"/api/videos/download-burned/{preview_filename}",
+                    "duration": 15
+                }
+                
+                logger.info(f"Превью создано: {preview_result}")
+                
+            except Exception as e:
+                logger.warning(f"Ошибка создания превью: {str(e)}")
+                # Превью не критично, продолжаем без него
+        
+        logger.info(f"Видео с субтитрами создано: {result_path}")
+        return response_data
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания видео с субтитрами: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания видео: {str(e)}")
+
+@app.post("/api/clips/burn-subtitles-batch")
+async def burn_subtitles_to_clips(
+    task_id: str,
+    quality: str = "high",
+    style_name: str = "modern"
+):
+    """
+    Создает клипы с вшитыми субтитрами (массовая обработка)
+    
+    Args:
+        task_id: ID задачи генерации клипов
+        quality: Качество видео
+        style_name: Стиль субтитров
+    """
+    try:
+        # Проверяем существование задачи
+        if task_id not in clip_tasks:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        clip_task = clip_tasks[task_id]
+        
+        if clip_task["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Клипы еще не созданы")
+        
+        clips = clip_task.get("clips", [])
+        if not clips:
+            raise HTTPException(status_code=400, detail="Клипы не найдены")
+        
+        # Получаем video_id из задачи
+        video_id = clip_task.get("video_id")
+        if not video_id or video_id not in video_tasks:
+            raise HTTPException(status_code=400, detail="Исходное видео не найдено")
+        
+        # Создаем ASS субтитры
+        ass_dir = Config.ASS_DIR
+        os.makedirs(ass_dir, exist_ok=True)
+        
+        ass_filename = f"{video_id}_karaoke.ass"
+        ass_path = os.path.join(ass_dir, ass_filename)
+        
+        # Генерируем ASS файл если его нет
+        if not os.path.exists(ass_path):
+            video_task = video_tasks[video_id]
+            subtitle_data = video_task.get("subtitle_data")
+            if not subtitle_data:
+                raise HTTPException(status_code=400, detail="Субтитры не найдены")
+            
+            # Применяем стиль
+            if style_name in Config.ASS_STYLES:
+                style_config = Config.ASS_STYLES[style_name]
+                ass_generator.karaoke_style.update({
+                    'font_name': style_config['fontname'],
+                    'font_size': style_config['fontsize'],
+                    'primary_color': style_config['primarycolor'],
+                    'secondary_color': style_config['secondarycolor']
+                })
+            
+            ass_generator.generate_ass_from_whisperx(
+                subtitle_data,
+                ass_path,
+                karaoke_mode=True
+            )
+        
+        # Подготавливаем список клипов для обработки
+        clip_list = []
+        for clip in clips:
+            clip_path = clip.get("file_path")
+            clip_name = clip.get("title", "clip")
+            
+            if clip_path and os.path.exists(clip_path):
+                clip_list.append({
+                    "path": clip_path,
+                    "name": clip_name.replace(" ", "_")  # Убираем пробелы из имени
+                })
+        
+        if not clip_list:
+            raise HTTPException(status_code=400, detail="Нет доступных клипов для обработки")
+        
+        # Создаем директорию для burned-in клипов
+        burned_clips_dir = f"burned_clips_{task_id}"
+        os.makedirs(burned_clips_dir, exist_ok=True)
+        
+        # Массовая обработка клипов
+        logger.info(f"Начинаем массовую обработку {len(clip_list)} клипов")
+        
+        burned_clips = video_burner.batch_burn_subtitles(
+            clip_list,
+            ass_path,
+            burned_clips_dir,
+            quality=quality
+        )
+        
+        # Формируем ответ
+        response_clips = []
+        for burned_path in burned_clips:
+            filename = os.path.basename(burned_path)
+            response_clips.append({
+                "filename": filename,
+                "download_url": f"/api/clips/download-burned/{filename}",
+                "file_size": os.path.getsize(burned_path) if os.path.exists(burned_path) else 0
+            })
+        
+        logger.info(f"Создано {len(burned_clips)} клипов с субтитрами")
+        
+        return {
+            "success": True,
+            "clips_processed": len(burned_clips),
+            "total_clips": len(clip_list),
+            "quality": quality,
+            "style": style_name,
+            "clips": response_clips
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка массовой обработки клипов: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки клипов: {str(e)}")
+
+@app.get("/api/videos/download-burned/{filename}")
+async def download_burned_video(filename: str):
+    """Скачивание видео с вшитыми субтитрами"""
+    file_path = os.path.join("burned_videos", filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    
+    return FileResponse(
+        file_path,
+        media_type="video/mp4",
+        filename=filename
+    )
+
+@app.get("/api/clips/download-burned/{filename}")
+async def download_burned_clip(filename: str):
+    """Скачивание клипа с вшитыми субтитрами"""
+    # Ищем файл во всех директориях burned_clips_*
+    for root, dirs, files in os.walk("."):
+        if filename in files and "burned_clips_" in root:
+            file_path = os.path.join(root, filename)
+            return FileResponse(
+                file_path,
+                media_type="video/mp4",
+                filename=filename
+            )
+    
+    raise HTTPException(status_code=404, detail="Файл не найден")
+
+@app.get("/api/videos/burn-progress/{video_id}")
+async def get_burn_progress(video_id: str):
+    """Получить прогресс создания видео с субтитрами"""
+    if video_id not in video_tasks:
+        raise HTTPException(status_code=404, detail="Видео не найдено")
+    
+    video_task = video_tasks[video_id]
+    burn_progress = video_task.get("burn_progress", 0)
+    
+    return {
+        "video_id": video_id,
+        "progress": burn_progress,
+        "status": "processing" if burn_progress < 100 else "completed"
+    }
 
