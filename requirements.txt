@@ -11,6 +11,7 @@ openai>=1.35.0
 httpx>=0.24.0,<0.26.0
 tiktoken==0.5.2
 tinydb==4.8.0
+tinymongo==0.2.0
 proglog==0.1.10
 
 # Video/Audio processing
