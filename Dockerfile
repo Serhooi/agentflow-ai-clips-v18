@@ -1,7 +1,9 @@
-# AgentFlow AI Clips v19.0.2 - ShortGPT Integration (Cache Bypass)
-FROM python:3.11-slim
+# AgentFlow AI Clips v19.1.0 - Правильная интеграция с ShortGPT
+# Основано на оригинальном ShortGPT Dockerfile
 
-# Устанавливаем системные зависимости
+FROM python:3.10-slim
+
+# Устанавливаем системные зависимости (как в оригинальном ShortGPT)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
@@ -14,8 +16,7 @@ WORKDIR /app
 
 # Копируем requirements и устанавливаем зависимости
 COPY requirements.txt .
-# Принудительный сброс кэша для tinymongo v19.0.4
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Клонируем ShortGPT
 RUN git clone https://github.com/RayVentura/ShortGPT.git /app/ShortGPT
