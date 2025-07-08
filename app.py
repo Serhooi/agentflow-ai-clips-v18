@@ -865,7 +865,7 @@ async def generate_clip(request: ClipGenerationRequest):
         clip_url = upload_clip_to_supabase(clip_path, f"{clip_id}.mp4")
         
         # Возвращаем информацию о клипе
-        return {
+        result = {
             "clip_id": clip_id,
             "video_id": video_id,
             "format_id": format_id,
@@ -877,6 +877,11 @@ async def generate_clip(request: ClipGenerationRequest):
             "description": highlight.get("description", ""),
             "url": clip_url
         }
+        
+        logger.info(f"✅ Клип успешно сгенерирован: {clip_id}")
+        logger.info(f"📊 Возвращаемый результат: {result}")
+        
+        return result
         
     except HTTPException:
         raise
@@ -896,6 +901,37 @@ async def download_clip(clip_id: str):
         filename=f"{clip_id}.mp4",
         media_type="video/mp4"
     )
+
+@app.get("/api/clips/generation/{clip_id}/status")
+async def get_clip_generation_status(clip_id: str):
+    """Получение статуса генерации клипа"""
+    try:
+        # Проверяем существование клипа
+        clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
+        
+        if os.path.exists(clip_path):
+            # Клип готов
+            return {
+                "status": "completed",
+                "clip_id": clip_id,
+                "message": "Клип успешно сгенерирован",
+                "download_url": f"/api/clips/download/{clip_id}"
+            }
+        else:
+            # Клип не найден
+            return {
+                "status": "not_found",
+                "clip_id": clip_id,
+                "message": "Клип не найден"
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки статуса клипа {clip_id}: {e}")
+        return {
+            "status": "error",
+            "clip_id": clip_id,
+            "message": f"Ошибка: {str(e)}"
+        }
 
 # Запуск приложения
 if __name__ == "__main__":
