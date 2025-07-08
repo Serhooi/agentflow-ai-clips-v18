@@ -467,7 +467,7 @@ async def process_video(video_id: str) -> dict:
         logger.info("🔄 Транскрибация аудио...")
         transcript = await transcribe_audio(audio_path)
         
-        if "error" in transcript:
+        if "error" in transcript and not transcript.get("segments"):
             logger.error(f"❌ Ошибка транскрибации: {transcript['error']}")
             return {"error": transcript["error"]}
         
@@ -476,73 +476,87 @@ async def process_video(video_id: str) -> dict:
         with open(transcript_path, 'w', encoding='utf-8') as f:
             json.dump(transcript, f, ensure_ascii=False, indent=2)
         
-        # Получаем полный текст для анализа
-        full_text = " ".join([segment["text"] for segment in transcript["segments"]])
+        # Подготавливаем текст для анализа
+        transcript_text = " ".join([segment["text"] for segment in transcript["segments"]])
         
         # Анализ с ChatGPT
         logger.info("🔄 Анализ транскрипта с ChatGPT...")
-        highlights = await analyze_with_chatgpt(full_text, video_duration)
+        analysis = await analyze_with_chatgpt(transcript_text, video_duration)
         
-        if not highlights or "error" in highlights:
-            logger.error("❌ Ошибка анализа с ChatGPT")
-            return {"error": "Analysis failed"}
+        if not analysis or "error" in analysis:
+            logger.error(f"❌ Ошибка анализа: {analysis.get('error', 'Unknown error')}")
+            # Используем fallback
+            analysis = create_fallback_highlights(video_duration, 3)
         
-        # Сохраняем результаты анализа
-        result_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
-        with open(result_path, 'w', encoding='utf-8') as f:
-            json.dump(highlights, f, ensure_ascii=False, indent=2)
+        # Сохраняем анализ
+        analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+        with open(analysis_path, 'w', encoding='utf-8') as f:
+            json.dump(analysis, f, ensure_ascii=False, indent=2)
         
-        # Объединяем результаты
-        result = {
-            "video_id": video_id,
-            "duration": video_duration,
-            "transcript": transcript,
-            "highlights": highlights.get("highlights", [])
-        }
-        
+        # Возвращаем результат
         logger.info(f"✅ Анализ видео завершен: {video_id}")
-        return result
+        logger.info(f"✅ Обработка видео {video_id} завершена успешно")
+        
+        return {
+            "transcript": transcript,
+            "highlights": analysis.get("highlights", [])
+        }
         
     except Exception as e:
         logger.error(f"❌ Ошибка обработки видео: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
         return {"error": str(e)}
 
-async def process_video_queue(video_id: str):
-    """Обработка видео в очереди с ограничением параллельных задач"""
-    # Обновляем статус на "в очереди"
-    queue_position = sum(1 for status in task_status.values() 
-                        if status.get("status") == "queued")
-    task_status[video_id] = {"status": "queued", "position": queue_position}
+async def process_video_task(video_id: str):
+    """Задача обработки видео для очереди"""
+    # Обновляем статус
+    task_status[video_id] = {
+        "status": "processing",
+        "progress": 10,
+        "message": "Начало обработки видео"
+    }
     
-    # Ждем доступности семафора (ограничивает параллельную обработку)
-    async with processing_semaphore:
-        try:
-            # Обновляем статус
-            task_status[video_id] = {"status": "processing"}
+    try:
+        # Получаем семафор для ограничения параллельной обработки
+        async with processing_semaphore:
             logger.info(f"🔄 Начало обработки видео из очереди: {video_id}")
             
-            # Обработка видео
+            # Обновляем статус
+            task_status[video_id] = {
+                "status": "processing",
+                "progress": 20,
+                "message": "Извлечение аудио из видео..."
+            }
+            
+            # Обрабатываем видео
             result = await process_video(video_id)
             
-            # Обновляем статус по завершении
             if "error" in result:
-                task_status[video_id] = {"status": "error", "error": result["error"]}
+                # Обновляем статус с ошибкой
+                task_status[video_id] = {
+                    "status": "error",
+                    "progress": 100,
+                    "message": f"Ошибка: {result['error']}"
+                }
                 logger.error(f"❌ Ошибка обработки видео {video_id}: {result['error']}")
             else:
-                task_status[video_id] = {"status": "completed", "result": result}
+                # Обновляем статус с успехом
+                task_status[video_id] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Обработка завершена успешно",
+                    "result": result
+                }
                 logger.info(f"✅ Обработка видео {video_id} завершена успешно")
-                
-            # Принудительная очистка памяти
-            import gc
-            gc.collect()
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка в очереди обработки для {video_id}: {e}")
-            task_status[video_id] = {"status": "error", "error": str(e)}
+    
+    except Exception as e:
+        # Обновляем статус с ошибкой
+        task_status[video_id] = {
+            "status": "error",
+            "progress": 100,
+            "message": f"Ошибка: {str(e)}"
+        }
+        logger.error(f"❌ Ошибка в задаче обработки видео {video_id}: {e}")
 
-# API эндпоинты
 @app.post("/api/videos/upload")
 async def upload_video(file: UploadFile = File(...)):
     """Загрузка видео"""
@@ -551,34 +565,35 @@ async def upload_video(file: UploadFile = File(...)):
         video_id = str(uuid.uuid4())
         
         # Путь для сохранения
-        file_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+        video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
         
         # Сохраняем файл
-        with open(file_path, "wb") as buffer:
+        with open(video_path, "wb") as buffer:
             buffer.write(await file.read())
         
         # Получаем информацию о видео
-        file_size = os.path.getsize(file_path)
-        duration = get_video_duration(file_path)
+        file_size = os.path.getsize(video_path)
+        duration = get_video_duration(video_path)
         
         logger.info(f"📁 Получен файл: {file.filename} ({file_size / 1024 / 1024:.1f} MB)")
         logger.info(f"✅ Видео загружено: {video_id}, длительность: {duration:.1f}s")
         
+        # Возвращаем информацию
         return {
             "video_id": video_id,
             "filename": file.filename,
-            "size": file_size,
             "duration": duration,
-            "status": "uploaded",
+            "size": file_size,
             "upload_time": datetime.now().isoformat()
         }
+    
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки видео: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/videos/analyze")
 async def analyze_video(request: VideoAnalysisRequest, background_tasks: BackgroundTasks):
-    """Анализ видео с постановкой в очередь"""
+    """Анализ видео с транскрибацией"""
     video_id = request.video_id
     
     # Проверяем существование видео
@@ -586,18 +601,70 @@ async def analyze_video(request: VideoAnalysisRequest, background_tasks: Backgro
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Video not found")
     
-    # Добавляем в очередь и запускаем обработку
-    logger.info(f"🔍 Начинаю анализ видео: {video_id}")
-    background_tasks.add_task(process_video_queue, video_id)
+    # Проверяем, не обрабатывается ли уже видео
+    if video_id in task_status:
+        status = task_status[video_id]["status"]
+        if status == "processing":
+            return {"status": "processing", "message": "Видео уже обрабатывается"}
+        elif status == "completed":
+            return {"status": "completed", "message": "Видео уже обработано"}
     
-    return {"video_id": video_id, "status": "queued"}
+    # Добавляем в очередь
+    logger.info(f"🔍 Начинаю анализ видео: {video_id}")
+    
+    # Инициализируем статус
+    task_status[video_id] = {
+        "status": "queued",
+        "progress": 0,
+        "message": "В очереди на обработку"
+    }
+    
+    # Запускаем задачу в фоне
+    background_tasks.add_task(process_video_task, video_id)
+    
+    return {"status": "queued", "video_id": video_id, "message": "Видео добавлено в очередь на обработку"}
 
 @app.get("/api/videos/{video_id}/status")
 async def get_video_status(video_id: str):
     """Получение статуса обработки видео"""
-    if video_id not in task_status:
-        return {"status": "not_found"}
+    # Проверяем существование видео
+    video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
     
+    # Проверяем статус в очереди
+    if video_id not in task_status:
+        # Проверяем, есть ли сохраненные результаты
+        transcript_path = os.path.join(RESULTS_DIR, f"{video_id}_transcript.json")
+        analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+        
+        if os.path.exists(transcript_path) and os.path.exists(analysis_path):
+            # Загружаем результаты
+            with open(transcript_path, 'r', encoding='utf-8') as f:
+                transcript = json.load(f)
+            
+            with open(analysis_path, 'r', encoding='utf-8') as f:
+                analysis = json.load(f)
+            
+            # Создаем статус с результатами
+            task_status[video_id] = {
+                "status": "completed",
+                "progress": 100,
+                "message": "Обработка завершена успешно",
+                "result": {
+                    "transcript": transcript,
+                    "highlights": analysis.get("highlights", [])
+                }
+            }
+        else:
+            # Нет информации о задаче
+            return {
+                "status": "unknown",
+                "video_id": video_id,
+                "message": "Видео не обрабатывалось или информация о задаче утеряна"
+            }
+    
+    # Получаем текущий статус
     status_data = task_status[video_id]
     
     # Если обработка завершена, возвращаем результат в нужном формате
@@ -715,6 +782,101 @@ async def get_video_ass_subtitles(video_id: str):
     except Exception as e:
         logger.error(f"❌ Ошибка генерации ASS субтитров: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Генерация клипов
+@app.post("/api/clips/generate")
+async def generate_clip(request: ClipGenerationRequest):
+    """Генерация клипа из видео"""
+    video_id = request.video_id
+    format_id = request.format_id
+    style_id = request.style_id
+    
+    try:
+        # Проверяем существование видео
+        video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+        if not os.path.exists(video_path):
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # Проверяем завершение обработки
+        if video_id not in task_status or task_status[video_id].get("status") != "completed":
+            raise HTTPException(status_code=400, detail="Video processing not completed")
+        
+        # Получаем выделенные моменты
+        analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+        if not os.path.exists(analysis_path):
+            raise HTTPException(status_code=404, detail="Analysis not found")
+        
+        with open(analysis_path, 'r', encoding='utf-8') as f:
+            analysis = json.load(f)
+        
+        highlights = analysis.get("highlights", [])
+        if not highlights:
+            raise HTTPException(status_code=404, detail="No highlights found")
+        
+        # Генерируем клип для первого выделенного момента
+        highlight = highlights[0]
+        start_time = highlight["start_time"]
+        end_time = highlight["end_time"]
+        
+        # Генерируем уникальный ID для клипа
+        clip_id = str(uuid.uuid4())
+        
+        # Путь для сохранения
+        clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
+        
+        # Команда FFmpeg для вырезания клипа
+        cmd = [
+            'ffmpeg', '-i', video_path,
+            '-ss', str(start_time),
+            '-to', str(end_time),
+            '-c:v', 'libx264', '-c:a', 'aac',
+            '-strict', 'experimental',
+            '-b:a', '128k', '-y',
+            clip_path
+        ]
+        
+        # Запускаем FFmpeg
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if not os.path.exists(clip_path):
+            logger.error(f"❌ Ошибка генерации клипа: {result.stderr}")
+            raise HTTPException(status_code=500, detail="Clip generation failed")
+        
+        # Загружаем в Supabase если доступен
+        clip_url = upload_clip_to_supabase(clip_path, f"{clip_id}.mp4")
+        
+        # Возвращаем информацию о клипе
+        return {
+            "clip_id": clip_id,
+            "video_id": video_id,
+            "format_id": format_id,
+            "style_id": style_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": end_time - start_time,
+            "title": highlight.get("title", "Клип"),
+            "description": highlight.get("description", ""),
+            "url": clip_url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации клипа: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/clips/download/{clip_id}")
+async def download_clip(clip_id: str):
+    """Скачивание клипа"""
+    clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
+    if not os.path.exists(clip_path):
+        raise HTTPException(status_code=404, detail="Clip not found")
+    
+    return FileResponse(
+        path=clip_path,
+        filename=f"{clip_id}.mp4",
+        media_type="video/mp4"
+    )
 
 # Запуск приложения
 if __name__ == "__main__":
