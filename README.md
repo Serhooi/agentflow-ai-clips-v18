@@ -1,412 +1,176 @@
-# AgentFlow AI Clips v20.1.0 - WhisperX Upgrade
+# AgentFlow AI Clips v21.0.0
 
-🎬 **Профессиональная система генерации коротких клипов с караоке-субтитрами как в Opus.pro**
+Оптимизированная система для создания коротких клипов с профессиональными субтитрами и караоке-эффектами.
 
-## 🚀 Новые возможности v20.1.0
+## 🚀 Новые возможности
 
-### ✨ **Революционные улучшения субтитров:**
-- 🎯 **WhisperX интеграция** - word-level тайминги для каждого слова
-- 🎤 **Караоке-эффекты** - подсветка слов в реальном времени
-- 🎨 **ASS субтитры** - профессиональные субтитры с эффектами
-- 🔥 **Burned-in видео** - видео с вшитыми субтитрами
-- 📱 **React плеер** - интерактивные субтитры во фронтенде
+- **Whisper.cpp** - легкая и быстрая версия Whisper для транскрибации
+- **Система очередей** - стабильная обработка видео без перезагрузок
+- **Оптимизация памяти** - работает на серверах с 512MB RAM
+- **ASS субтитры** - профессиональные караоке-эффекты
+- **Burned-in видео** - видео с вшитыми субтитрами
+- **Supabase интеграция** - хранение и доставка видео
 
-### 🎯 **Качество как в Opus.pro:**
-- ✅ Точная синхронизация слов с аудио
-- ✅ Красивые караоке-эффекты
-- ✅ Множество стилей субтитров
-- ✅ Превью и предварительный просмотр
-- ✅ Экспорт в разных форматах
+## 📋 Требования
 
-## 📋 Содержание
+- Python 3.8+
+- FFmpeg
+- 512MB+ RAM
+- Supabase аккаунт (опционально)
+- OpenAI API ключ
 
-- [Установка](#установка)
-- [Быстрый старт](#быстрый-старт)
-- [API Endpoints](#api-endpoints)
-- [Компоненты React](#компоненты-react)
-- [Стили субтитров](#стили-субтитров)
-- [Деплой на Render](#деплой-на-render)
-- [Примеры использования](#примеры-использования)
-
-## 🛠 Установка
-
-### Локальная установка
+## 🛠️ Установка
 
 ```bash
-# Клонируем репозиторий
-git clone https://github.com/your-repo/agentflow-whisperx-upgrade.git
-cd agentflow-whisperx-upgrade
+# Клонирование репозитория
+git clone https://github.com/Serhooi/agentflow-ai-clips-v18.git
+cd agentflow-ai-clips-v18
 
-# Устанавливаем зависимости
+# Переключение на ветку с оптимизированной версией
+git checkout whisper-cpp-queue
+
+# Установка зависимостей
 pip install -r requirements.txt
 
-# Устанавливаем FFmpeg (Ubuntu/Debian)
-sudo apt update
-sudo apt install ffmpeg
+# Создание .env файла
+cp .env.example .env
+# Отредактируйте .env файл, добавив ваши ключи API
+```
 
-# Или на macOS
-brew install ffmpeg
+## 🚀 Запуск
 
-# Настраиваем переменные окружения
-export OPENAI_API_KEY="your-openai-key"
-export SUPABASE_URL="your-supabase-url"  # Опционально
-export SUPABASE_ANON_KEY="your-key"      # Опционально
-
-# Запускаем приложение
+```bash
+# Локальный запуск
 python app.py
+
+# Или с uvicorn
+uvicorn app:app --host 0.0.0.0 --port 10000
 ```
 
-### Docker установка
+## 🌐 API Endpoints
 
-```bash
-# Собираем образ
-docker build -t agentflow-whisperx .
+### Загрузка видео
 
-# Запускаем контейнер
-docker run -p 8000:8000 \
-  -e OPENAI_API_KEY="your-key" \
-  agentflow-whisperx
+```
+POST /api/videos/upload
 ```
 
-## 🚀 Быстрый старт
+Загружает видео и возвращает уникальный ID.
 
-### 1. Загрузка видео
-```bash
-curl -X POST "http://localhost:8000/api/videos/upload" \
-  -F "file=@your_video.mp4"
+### Анализ видео
+
+```
+POST /api/videos/analyze
 ```
 
-### 2. Анализ видео (автоматически запускается)
-```bash
-curl "http://localhost:8000/api/videos/{video_id}/status"
+Ставит видео в очередь на анализ и транскрибацию.
+
+### Проверка статуса
+
+```
+GET /api/videos/{video_id}/status
 ```
 
-### 3. Генерация ASS субтитров
-```bash
-curl -X POST "http://localhost:8000/api/subtitles/generate-ass" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "video_id": "your-video-id",
-    "karaoke_mode": true,
-    "style_name": "modern"
-  }'
+Возвращает текущий статус обработки видео:
+- `queued` - в очереди на обработку
+- `processing` - обрабатывается
+- `completed` - обработка завершена
+- `error` - ошибка обработки
+
+### Получение транскрипта
+
+```
+GET /api/videos/{video_id}/transcript
 ```
 
-### 4. Создание видео с субтитрами
-```bash
-curl -X POST "http://localhost:8000/api/videos/burn-subtitles" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "video_id": "your-video-id",
-    "quality": "high",
-    "style_name": "modern"
-  }'
+Возвращает транскрипт видео с word-level таймингами.
+
+### Получение выделенных моментов
+
+```
+GET /api/videos/{video_id}/highlights
 ```
 
-## 📡 API Endpoints
+Возвращает выделенные моменты для создания клипов.
 
-### 🎬 Видео обработка
-- `POST /api/videos/upload` - Загрузка видео
-- `POST /api/videos/analyze` - Анализ видео с WhisperX
-- `GET /api/videos/{video_id}/status` - Статус обработки
+### Получение ASS субтитров
 
-### 🎵 Субтитры
-- `POST /api/subtitles/generate-ass` - Генерация ASS субтитров
-- `GET /api/subtitles/download/{filename}` - Скачивание субтитров
-- `GET /api/subtitles/styles` - Доступные стили
-- `GET /api/subtitles/preview/{video_id}` - Превью субтитров
-
-### 🔥 Burned-in видео
-- `POST /api/videos/burn-subtitles` - Создание видео с субтитрами
-- `POST /api/clips/burn-subtitles-batch` - Массовая обработка клипов
-- `GET /api/videos/download-burned/{filename}` - Скачивание
-- `GET /api/videos/burn-progress/{video_id}` - Прогресс создания
-
-### ✂️ Генерация клипов
-- `POST /api/clips/generate` - Генерация клипов
-- `GET /api/clips/generation/{task_id}/status` - Статус генерации
-- `GET /api/clips/download/{filename}` - Скачивание клипов
-
-## ⚛️ Компоненты React
-
-### SubtitlePlayer - Караоке плеер
-
-```tsx
-import { SubtitlePlayer, useSubtitlePlayer } from './SubtitlePlayer';
-
-function VideoPlayer() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const { isPlaying, currentTime, togglePlay } = useSubtitlePlayer(videoRef);
-  
-  return (
-    <div className="video-container">
-      <video ref={videoRef} src="your-video.mp4" />
-      
-      <SubtitlePlayer
-        videoRef={videoRef}
-        subtitleData={subtitleData}
-        style="modern"
-        position="bottom"
-        fontSize="medium"
-        highlightColor="#FFD700"
-      />
-      
-      <button onClick={togglePlay}>
-        {isPlaying ? 'Pause' : 'Play'}
-      </button>
-    </div>
-  );
-}
+```
+GET /api/videos/{video_id}/subtitles/ass
 ```
 
-### Настройки SubtitlePlayer
+Возвращает ASS субтитры с караоке-эффектами.
 
-```tsx
-interface SubtitlePlayerProps {
-  videoRef: React.RefObject<HTMLVideoElement>;
-  subtitleData: SubtitleData | null;
-  style?: 'modern' | 'classic' | 'neon' | 'minimal';
-  position?: 'bottom' | 'top' | 'center';
-  fontSize?: 'small' | 'medium' | 'large';
-  showBackground?: boolean;
-  highlightColor?: string;
-  textColor?: string;
-}
+### Проверка здоровья
+
+```
+GET /health
 ```
 
-## 🎨 Стили субтитров
+Возвращает статус сервера и информацию о системе.
 
-### Modern (по умолчанию)
-- Шрифт: Montserrat
-- Цвет: Белый текст, зеленая подсветка
-- Эффект: Градиентная подсветка
+## 🔧 Настройка Supabase
 
-### Neon
-- Шрифт: Arial
-- Цвет: Белый текст, пурпурная подсветка
-- Эффект: Неоновое свечение
+1. Создайте проект на [Supabase](https://supabase.com/)
+2. Создайте bucket `video-results` с публичным доступом:
 
-### Fire
-- Шрифт: Impact
-- Цвет: Белый текст, оранжевая подсветка
-- Эффект: Огненные цвета
-
-### Получение доступных стилей
-```bash
-curl "http://localhost:8000/api/subtitles/styles"
+```sql
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('video-results', 'video-results', true);
 ```
 
-## 🌐 Деплой на Render
+3. Добавьте переменные окружения:
 
-### 1. Подготовка репозитория
-```bash
-# Коммитим все изменения
-git add .
-git commit -m "v20.1.0: WhisperX + ASS + Burned-in видео"
-git push origin main
+```
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-key
 ```
 
-### 2. Настройка Render.com
-1. Создайте новый Web Service
-2. Подключите GitHub репозиторий
-3. Настройте переменные окружения:
-   - `OPENAI_API_KEY` - ваш ключ OpenAI
-   - `SUPABASE_URL` - URL Supabase (опционально)
-   - `SUPABASE_ANON_KEY` - ключ Supabase (опционально)
+## 🚀 Деплой на Render.com
 
-### 3. Настройки деплоя
-- **Build Command:** `pip install -r requirements.txt`
-- **Start Command:** `python app.py`
-- **Environment:** Python 3.11
-- **Region:** Выберите ближайший
-
-### 4. Проверка деплоя
-```bash
-curl "https://your-app.onrender.com/api/health"
-```
-
-## 📖 Примеры использования
-
-### Полный workflow обработки видео
-
-```python
-import requests
-import time
-
-# 1. Загружаем видео
-with open('video.mp4', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8000/api/videos/upload',
-        files={'file': f}
-    )
-video_id = response.json()['video_id']
-
-# 2. Ждем завершения анализа
-while True:
-    status = requests.get(f'http://localhost:8000/api/videos/{video_id}/status')
-    if status.json()['status'] == 'completed':
-        break
-    time.sleep(5)
-
-# 3. Генерируем ASS субтитры
-requests.post('http://localhost:8000/api/subtitles/generate-ass', json={
-    'video_id': video_id,
-    'karaoke_mode': True,
-    'style_name': 'modern'
-})
-
-# 4. Создаем видео с субтитрами
-requests.post('http://localhost:8000/api/videos/burn-subtitles', json={
-    'video_id': video_id,
-    'quality': 'high',
-    'style_name': 'modern'
-})
-
-# 5. Скачиваем результат
-burned_video = requests.get(f'http://localhost:8000/api/videos/download-burned/{video_id}_burned_high.mp4')
-with open('result.mp4', 'wb') as f:
-    f.write(burned_video.content)
-```
-
-### Интеграция с React фронтендом
-
-```tsx
-// Загрузка и обработка видео
-const uploadVideo = async (file: File) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  
-  const response = await fetch('/api/videos/upload', {
-    method: 'POST',
-    body: formData
-  });
-  
-  const { video_id } = await response.json();
-  return video_id;
-};
-
-// Генерация субтитров
-const generateSubtitles = async (videoId: string, style: string) => {
-  const response = await fetch('/api/subtitles/generate-ass', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      video_id: videoId,
-      karaoke_mode: true,
-      style_name: style
-    })
-  });
-  
-  return response.json();
-};
-
-// Создание burned-in видео
-const burnSubtitles = async (videoId: string, quality: string) => {
-  const response = await fetch('/api/videos/burn-subtitles', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      video_id: videoId,
-      quality: quality,
-      style_name: 'modern'
-    })
-  });
-  
-  return response.json();
-};
-```
-
-## 🔧 Конфигурация
-
-### Настройки качества видео
-- **low** - 500k битрейт, быстрое кодирование
-- **medium** - 1000k битрейт, среднее качество
-- **high** - 2000k битрейт, высокое качество (рекомендуется)
-- **ultra** - 4000k битрейт, максимальное качество
-
-### Настройки WhisperX
-```python
-# В app.py можно настроить:
-WHISPERX_MODEL = "large-v2"  # Модель Whisper
-WHISPERX_DEVICE = "cpu"      # Устройство (cpu/cuda)
-WHISPERX_BATCH_SIZE = 16     # Размер батча
-```
-
-## 🐛 Устранение неполадок
-
-### Ошибка "FFmpeg не найден"
-```bash
-# Ubuntu/Debian
-sudo apt install ffmpeg
-
-# CentOS/RHEL
-sudo yum install ffmpeg
-
-# macOS
-brew install ffmpeg
-```
-
-### Ошибка "CUDA не доступна"
-```bash
-# Для CPU-only режима добавьте в переменные окружения:
-export WHISPERX_DEVICE="cpu"
-```
-
-### Проблемы с памятью
-```bash
-# Уменьшите размер батча WhisperX:
-export WHISPERX_BATCH_SIZE=8
-```
+1. Подключите GitHub репозиторий к Render.com
+2. Создайте новый Web Service
+3. Настройте:
+   - **Repository**: `https://github.com/Serhooi/agentflow-ai-clips-v18`
+   - **Branch**: `whisper-cpp-queue`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python app.py`
+4. Добавьте переменные окружения:
+   - `OPENAI_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+5. Нажмите "Create Web Service"
 
 ## 📊 Производительность
 
-### Время обработки (примерно):
-- **Анализ видео (5 мин):** ~2-3 минуты
-- **Генерация ASS:** ~5-10 секунд
-- **Burned-in видео:** ~1-2 минуты
-- **Генерация клипов:** ~30-60 секунд
+- **RAM**: 512MB-1GB
+- **Одновременная обработка**: 1 видео
+- **Очередь**: Неограниченная
+- **Время обработки**: ~1-2 минуты на видео (зависит от длительности)
 
-### Требования к ресурсам:
-- **RAM:** Минимум 2GB, рекомендуется 4GB
-- **CPU:** 2+ ядра
-- **Диск:** 1GB свободного места на видео
-- **GPU:** Опционально для ускорения
+## 🔍 Устранение неполадок
 
-## 🔄 Обновления
+### Ошибка "Out of Memory"
 
-### v20.1.0 (текущая)
-- ✅ WhisperX интеграция
-- ✅ ASS субтитры с караоке
-- ✅ Burned-in видео с FFmpeg
-- ✅ React караоке-плеер
-- ✅ Множественные стили
+Увеличьте лимит RAM на Render.com до 1GB или используйте еще более оптимизированную модель:
 
-### v18.3.0 (предыдущая)
-- ✅ Базовая генерация клипов
-- ✅ Простые субтитры
-- ✅ OpenAI интеграция
-
-## 🤝 Поддержка
-
-### Документация API
-Полная документация доступна по адресу: `http://localhost:8000/docs`
-
-### Логи и отладка
-```bash
-# Включить подробные логи
-export LOG_LEVEL=DEBUG
-python app.py
+```python
+whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
 ```
 
-### Контакты
-- GitHub Issues: [Создать issue](https://github.com/your-repo/issues)
-- Email: support@agentflow.ai
+### Ошибка с Supabase
 
-## 📄 Лицензия
+Проверьте правильность ключей и URL. Если проблема сохраняется, используйте локальное хранение:
 
-MIT License - см. файл [LICENSE](LICENSE)
+```
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+```
 
----
+## 📝 Лицензия
 
-🎬 **AgentFlow AI Clips v20.1.0** - Профессиональные короткие клипы с караоке-субтитрами как в Opus.pro!
+MIT
 

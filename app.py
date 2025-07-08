@@ -1,38 +1,38 @@
-# AgentFlow AI Clips v20.1.0 - УЛУЧШЕННЫЕ СУБТИТРЫ с WhisperX
-# Замена Whisper на WhisperX для word-level таймингов
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+AgentFlow AI Clips API v21.0.0
+Оптимизированная версия с Whisper.cpp и системой очередей
+"""
 
 import os
 import json
 import uuid
-import asyncio
-import logging
-import subprocess
-import tempfile
-import shutil
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from pathlib import Path
-import psutil
 import time
-
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-import openai
-from openai import OpenAI
+import logging
+import asyncio
+import subprocess
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Union
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger("app")
 
-# WhisperX для улучшенных субтитров
-import whisperx
-import torch
+# Загрузка переменных окружения
+from dotenv import load_dotenv
+load_dotenv()
+
+# OpenAI для анализа контента
+from openai import OpenAI
+
+# Faster-Whisper (Whisper.cpp) для транскрибации
+from faster_whisper import WhisperModel
 
 # Supabase (опционально)
 try:
@@ -44,10 +44,15 @@ except ImportError:
     logger.warning("⚠️ Supabase не установлен - используется локальное хранение")
 
 # Инициализация FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
 app = FastAPI(
     title="AgentFlow AI Clips API",
-    description="Профессиональная система генерации коротких клипов с улучшенными субтитрами WhisperX",
-    version="20.1.0"
+    description="Профессиональная система генерации коротких клипов с оптимизированной обработкой",
+    version="21.0.0"
 )
 
 # CORS настройки
@@ -59,143 +64,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Конфигурация
-class Config:
-    # Основные папки
-    UPLOAD_DIR = "uploads"
-    AUDIO_DIR = "audio"
-    CLIPS_DIR = "clips"
-    ASS_DIR = "ass_subtitles"
-    
-    # Лимиты
-    MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-    
-    # Настройки очистки
-    MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
-    CLEANUP_INTERVAL = 3600      # Очистка каждый час
-    
-    # ASS стили для караоке
-    ASS_STYLES = {
-        "modern": {
-            "name": "Modern",
-            "fontname": "Montserrat",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",  # Белый текст
-            "secondarycolor": "&H00ff00",  # Зеленая подсветка караоке
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 1,
-            "shadow": 0,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,  # Safe zone снизу
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#00ff00", "#000000"]
-        },
-        "neon": {
-            "name": "Neon",
-            "fontname": "Arial",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff00ff",  # Пурпурная подсветка
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 2,
-            "shadow": 0,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff00ff", "#000000"]
-        },
-        "fire": {
-            "name": "Fire",
-            "fontname": "Impact",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H0080ff",  # Оранжевая подсветка
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 2,
-            "shadow": 1,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff8000", "#000000"]
-        },
-        "elegant": {
-            "name": "Elegant",
-            "fontname": "Georgia",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H00ffff",  # Желтая подсветка
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": 0,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 1,
-            "shadow": 0,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#ffff00", "#000000"]
-        }
-    }
+# Директории для хранения файлов
+UPLOAD_DIR = "uploads"
+AUDIO_DIR = "audio"
+RESULTS_DIR = "results"
+CLIPS_DIR = "clips"
 
-# Создание необходимых папок
-for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.ASS_DIR]:
-    os.makedirs(directory, exist_ok=True)
-
-# Глобальные переменные
-analysis_tasks = {}
-generation_tasks = {}
+# Создаем директории если не существуют
+for dir_path in [UPLOAD_DIR, AUDIO_DIR, RESULTS_DIR, CLIPS_DIR]:
+    os.makedirs(dir_path, exist_ok=True)
 
 # Инициализация OpenAI
 openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    logger.error("❌ OPENAI_API_KEY не найден в переменных окружения")
-    raise ValueError("OPENAI_API_KEY обязателен")
-
 client = OpenAI(api_key=openai_api_key)
 logger.info("✅ OpenAI клиент инициализирован")
 
@@ -204,11 +84,13 @@ supabase = None
 service_supabase = None
 SUPABASE_BUCKET = "video-results"
 
-# WhisperX модели (ленивая загрузка для экономии памяти)
-whisperx_model = None
-align_model = None
-align_metadata = None
-whisperx_available = False
+# Глобальная модель Whisper.cpp
+whisper_model = None
+
+# Система очередей
+processing_semaphore = asyncio.Semaphore(1)  # Ограничиваем до 1 одновременной обработки
+task_queue = {}  # Очередь задач
+task_status = {}  # Статусы задач
 
 def init_supabase():
     """Инициализация Supabase клиентов"""
@@ -253,46 +135,23 @@ def init_supabase():
 # Инициализация Supabase при запуске
 supabase_available = init_supabase()
 
-def load_whisperx_models():
-    """Ленивая загрузка WhisperX моделей (только при необходимости)"""
-    global whisperx_model, align_model, align_metadata, whisperx_available
-    
-    if whisperx_available and whisperx_model is not None:
-        return True  # Уже загружены
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация при запуске приложения"""
+    global whisper_model
     
     try:
-        # Определяем устройство (CPU для Render.com)
-        device = "cpu"
-        compute_type = "int8"  # Для CPU оптимизации
-        
-        logger.info("🔄 Ленивая загрузка WhisperX модели...")
-        
-        # Загружаем основную модель WhisperX (маленькая модель для экономии памяти)
-        whisperx_model = whisperx.load_model(
-            "tiny",  # Используем tiny модель вместо base для экономии памяти
-            device=device, 
-            compute_type=compute_type,
-            language="ru"  # Русский язык по умолчанию
-        )
-        
-        logger.info("🔄 Загрузка модели выравнивания...")
-        
-        # Загружаем модель для выравнивания (word-level timing)
-        align_model, align_metadata = whisperx.load_align_model(
-            language_code="ru", 
-            device=device
-        )
-        
-        logger.info("✅ WhisperX модели загружены успешно")
-        whisperx_available = True
-        return True
-        
+        # Загружаем модель один раз при старте
+        logger.info("🔄 Загрузка Whisper.cpp модели...")
+        whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        logger.info("✅ Whisper.cpp модель загружена успешно")
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки WhisperX: {e}")
-        whisperx_available = False
-        return False
-
-# НЕ загружаем WhisperX при старте приложения (ленивая загрузка)
+        logger.error(f"❌ Ошибка загрузки Whisper.cpp модели: {e}")
+    
+    logger.info("🚀 AgentFlow AI Clips v21.0.0 started!")
+    logger.info("🎬 Whisper.cpp + очередь задач активированы")
+    logger.info("🔥 Оптимизировано для Render.com")
+    logger.info("⚡ Стабильная обработка видео")
 
 # Pydantic модели
 class VideoAnalysisRequest(BaseModel):
@@ -400,105 +259,66 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
         logger.error(f"Ошибка извлечения аудио: {e}")
         return False
 
-def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
-    """Улучшенная транскрибация аудио с WhisperX для word-level таймингов"""
-    global whisperx_model, align_model, align_metadata, whisperx_available
-    
-    # Ленивая загрузка WhisperX моделей
-    if not load_whisperx_models():
-        logger.error("❌ Не удалось загрузить WhisperX модели")
-        return None
-    
+def get_audio_duration(audio_path: str) -> float:
+    """Получение длительности аудио"""
     try:
-        logger.info("🔄 Загрузка аудио для WhisperX...")
-        
-        # Загружаем аудио
-        audio = whisperx.load_audio(audio_path)
-        
-        logger.info("🔄 Транскрибация с WhisperX...")
-        
-        # Транскрибация
-        result = whisperx_model.transcribe(audio, batch_size=8)  # Уменьшили batch_size
-        
-        logger.info("🔄 Выравнивание для word-level таймингов...")
-        
-        # Выравнивание для получения word-level таймингов
-        if align_model and align_metadata:
-            result = whisperx.align(
-                result["segments"], 
-                align_model, 
-                align_metadata, 
-                audio, 
-                device="cpu"
-            )
-        
-        # Форматируем результат в нужную структуру
-        formatted_result = {
-            "text": result.get("text", ""),
-            "segments": []
-        }
-        
-        for segment in result.get("segments", []):
-            formatted_segment = {
-                "id": segment.get("id", 0),
-                "start": segment.get("start", 0.0),
-                "end": segment.get("end", 0.0),
-                "text": segment.get("text", ""),
-                "words": []
-            }
-            
-            # Добавляем word-level тайминги если доступны
-            if "words" in segment:
-                for word in segment["words"]:
-                    formatted_word = {
-                        "word": word.get("word", ""),
-                        "start": word.get("start", 0.0),
-                        "end": word.get("end", 0.0),
-                        "score": word.get("score", 1.0)
-                    }
-                    formatted_segment["words"].append(formatted_word)
-            
-            formatted_result["segments"].append(formatted_segment)
-        
-        logger.info(f"✅ WhisperX транскрибация завершена: {len(formatted_result['segments'])} сегментов")
-        return formatted_result
-        
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', 
+            '-show_format', audio_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        return float(data['format']['duration'])
     except Exception as e:
-        logger.error(f"❌ Ошибка WhisperX транскрибации: {e}")
-        logger.warning("⚠️ Переключаемся на OpenAI Whisper API fallback")
-    
-    # Fallback на OpenAI Whisper API
-    try:
-        logger.info("🔄 Fallback транскрибация через OpenAI Whisper API...")
-        
-        with open(audio_path, "rb") as audio_file:
-            # Используем response_format="verbose_json" для получения слов с временными метками
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["word"]
-            )
-            
-            # Проверяем разные форматы ответа
-            if hasattr(transcript, 'model_dump'):
-                return transcript.model_dump()
-            elif hasattr(transcript, 'dict'):
-                return transcript.dict()
-            else:
-                # Fallback для старых версий
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    response_format="json"
-                )
-                return transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
-                
-    except Exception as e:
-        logger.error(f"❌ Ошибка fallback транскрибации: {e}")
-        return None
+        logger.error(f"Ошибка получения длительности аудио: {e}")
+        return 60.0  # Fallback
 
-def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
+async def transcribe_audio(audio_path: str) -> dict:
+    """Транскрибация аудио с Whisper.cpp"""
+    global whisper_model
+    
+    try:
+        # Проверяем длительность аудио
+        audio_duration = get_audio_duration(audio_path)
+        if audio_duration > 600:  # Ограничение 10 минут
+            logger.warning(f"⚠️ Аудио слишком длинное: {audio_duration} секунд")
+            return {"error": "Audio too long", "segments": []}
+        
+        # Проверяем, что модель загружена
+        if whisper_model is None:
+            logger.error("❌ Whisper.cpp модель не загружена")
+            return {"error": "Whisper model not loaded", "segments": []}
+        
+        logger.info("🔄 Транскрибация с Whisper.cpp...")
+        
+        # Транскрибация с обработкой ошибок
+        segments, info = whisper_model.transcribe(
+            audio_path, 
+            beam_size=1, 
+            word_timestamps=True,
+            max_initial_timestamp=audio_duration
+        )
+        
+        # Форматирование результата в нужный JSON
+        result = {"segments": []}
+        for segment in segments:
+            words = [{"word": w.word, "start": w.start, "end": w.end} for w in segment.words]
+            result["segments"].append({
+                "text": segment.text,
+                "start": segment.start,
+                "end": segment.end,
+                "words": words
+            })
+        
+        logger.info(f"✅ Whisper.cpp транскрибация завершена: {len(result['segments'])} сегментов")
+        return result
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка транскрибации: {e}")
+        # Возвращаем структуру с ошибкой, но сохраняем формат
+        return {"error": str(e), "segments": []}
+
+async def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
     """Улучшенный анализ транскрипта с ChatGPT для получения 3-5 клипов"""
     try:
         # Определяем количество клипов на основе длительности видео
@@ -598,1332 +418,306 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
         return create_fallback_highlights(video_duration, 3)
 
 def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict:
-    """Создание fallback клипов при ошибке ChatGPT"""
+    """Создание равномерно распределенных клипов при ошибке"""
     highlights = []
-    clip_duration = 18  # 18 секунд на клип
-    gap = 2  # 2 секунды между клипами
     
+    # Определяем длительность клипа и интервал между клипами
+    clip_duration = min(20.0, video_duration / target_clips)
+    interval = (video_duration - (clip_duration * target_clips)) / (target_clips + 1)
+    
+    # Создаем равномерно распределенные клипы
     for i in range(target_clips):
-        start = i * (clip_duration + gap)
-        end = start + clip_duration
+        start_time = interval * (i + 1) + clip_duration * i
+        end_time = start_time + clip_duration
         
-        if end > video_duration:
-            # Если не помещается, делаем клип до конца видео
-            end = video_duration
-            start = max(0, end - clip_duration)
-        
-        if start >= video_duration - 5:  # Минимум 5 секунд
-            break
-            
         highlights.append({
-            "start_time": start,
-            "end_time": end,
-            "title": f"Клип {i+1}",
-            "description": "Автоматически созданный клип",
+            "start_time": start_time,
+            "end_time": end_time,
+            "title": f"Клип {i + 1}",
+            "description": f"Автоматически созданный клип {i + 1}",
             "keywords": []
         })
     
     return {"highlights": highlights}
 
-# Революционная система субтитров с ASS-форматом и караоке-эффектом
-class ASSKaraokeSubtitleSystem:
-    """
-    Революционная система субтитров с ASS-форматом и караоке-эффектом
-    Основана на research: ASS + FFmpeg + GPU = Opus.pro качество
-    """
-    
-    def __init__(self):
-        self.styles = {
-            "modern": {
-                "fontname": "Arial",
-                "fontsize": 48,
-                "primarycolor": "&H00FFFFFF",
-                "secondarycolor": "&H000000FF", 
-                "outlinecolor": "&H00000000",
-                "backcolor": "&H80000000",
-                "outline": 2,
-                "shadow": 0,
-                "alignment": 2,
-                "marginv": 60
-            },
-            "neon": {
-                "fontname": "Arial",
-                "fontsize": 52,
-                "primarycolor": "&H0000FFFF",
-                "secondarycolor": "&H00FF00FF",
-                "outlinecolor": "&H00000000", 
-                "backcolor": "&H80000000",
-                "outline": 3,
-                "shadow": 2,
-                "alignment": 2,
-                "marginv": 60
-            },
-            "fire": {
-                "fontname": "Arial",
-                "fontsize": 50,
-                "primarycolor": "&H0000AAFF",
-                "secondarycolor": "&H000080FF",
-                "outlinecolor": "&H00000000",
-                "backcolor": "&H80000000", 
-                "outline": 2,
-                "shadow": 1,
-                "alignment": 2,
-                "marginv": 60
-            },
-            "elegant": {
-                "fontname": "Arial",
-                "fontsize": 46,
-                "primarycolor": "&H00FFFF00",
-                "secondarycolor": "&H00FFFF80",
-                "outlinecolor": "&H00000000",
-                "backcolor": "&H80000000",
-                "outline": 2,
-                "shadow": 0,
-                "alignment": 2,
-                "marginv": 60
-            }
+async def process_video(video_id: str) -> dict:
+    """Обработка видео с транскрибацией и анализом"""
+    try:
+        # Пути к файлам
+        video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+        audio_path = os.path.join(AUDIO_DIR, f"{video_id}.mp3")
+        
+        # Проверяем существование видео
+        if not os.path.exists(video_path):
+            logger.error(f"❌ Видео не найдено: {video_path}")
+            return {"error": "Video not found"}
+        
+        # Получаем длительность видео
+        video_duration = get_video_duration(video_path)
+        
+        # Извлекаем аудио
+        logger.info("🔄 Извлечение аудио из видео...")
+        if not extract_audio(video_path, audio_path):
+            logger.error("❌ Ошибка извлечения аудио")
+            return {"error": "Audio extraction failed"}
+        
+        logger.info(f"🎵 Аудио извлечено: {audio_path}")
+        
+        # Транскрибация аудио
+        logger.info("🔄 Транскрибация аудио...")
+        transcript = await transcribe_audio(audio_path)
+        
+        if "error" in transcript:
+            logger.error(f"❌ Ошибка транскрибации: {transcript['error']}")
+            return {"error": transcript["error"]}
+        
+        # Сохраняем транскрипт
+        transcript_path = os.path.join(RESULTS_DIR, f"{video_id}_transcript.json")
+        with open(transcript_path, 'w', encoding='utf-8') as f:
+            json.dump(transcript, f, ensure_ascii=False, indent=2)
+        
+        # Получаем полный текст для анализа
+        full_text = " ".join([segment["text"] for segment in transcript["segments"]])
+        
+        # Анализ с ChatGPT
+        logger.info("🔄 Анализ транскрипта с ChatGPT...")
+        highlights = await analyze_with_chatgpt(full_text, video_duration)
+        
+        if not highlights or "error" in highlights:
+            logger.error("❌ Ошибка анализа с ChatGPT")
+            return {"error": "Analysis failed"}
+        
+        # Сохраняем результаты анализа
+        result_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(highlights, f, ensure_ascii=False, indent=2)
+        
+        # Объединяем результаты
+        result = {
+            "video_id": video_id,
+            "duration": video_duration,
+            "transcript": transcript,
+            "highlights": highlights.get("highlights", [])
         }
         
-    def generate_ass_file(self, words_data: List[Dict], style: str = "modern", video_duration: float = 10.0) -> str:
-        """
-        Генерирует ASS файл с караоке-эффектом для подсветки слов
+        logger.info(f"✅ Анализ видео завершен: {video_id}")
+        return result
         
-        Args:
-            words_data: Список слов с таймингами [{"word": "Hello", "start": 0.0, "end": 1.0}, ...]
-            style: Стиль субтитров (modern, neon, fire, elegant)
-            video_duration: Длительность видео в секундах
-            
-        Returns:
-            Путь к созданному ASS файлу
-        """
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки видео: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {"error": str(e)}
+
+async def process_video_queue(video_id: str):
+    """Обработка видео в очереди с ограничением параллельных задач"""
+    # Обновляем статус на "в очереди"
+    queue_position = sum(1 for status in task_status.values() 
+                        if status.get("status") == "queued")
+    task_status[video_id] = {"status": "queued", "position": queue_position}
+    
+    # Ждем доступности семафора (ограничивает параллельную обработку)
+    async with processing_semaphore:
         try:
-            style_config = self.styles.get(style, self.styles["modern"])
+            # Обновляем статус
+            task_status[video_id] = {"status": "processing"}
+            logger.info(f"🔄 Начало обработки видео из очереди: {video_id}")
             
-            # Создаем уникальное имя файла
-            ass_filename = f"subtitles_{uuid.uuid4().hex[:8]}.ass"
-            ass_path = os.path.join("/tmp", ass_filename)
+            # Обработка видео
+            result = await process_video(video_id)
             
-            # Заголовок ASS файла
-            ass_content = f"""[Script Info]
-Title: AgentFlow AI Clips Karaoke Subtitles
-ScriptType: v4.00+
-WrapStyle: 0
-ScaledBorderAndShadow: yes
-YCbCr Matrix: TV.709
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},1,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},{style_config['alignment']},10,10,{style_config['marginv']},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-
-            # Группируем слова в фразы (по 3-4 слова)
-            phrases = self._group_words_into_phrases(words_data)
-            
-            # Генерируем события для каждой фразы
-            for phrase in phrases:
-                start_time = self._seconds_to_ass_time(phrase['start'])
-                end_time = self._seconds_to_ass_time(phrase['end'])
+            # Обновляем статус по завершении
+            if "error" in result:
+                task_status[video_id] = {"status": "error", "error": result["error"]}
+                logger.error(f"❌ Ошибка обработки видео {video_id}: {result['error']}")
+            else:
+                task_status[video_id] = {"status": "completed", "result": result}
+                logger.info(f"✅ Обработка видео {video_id} завершена успешно")
                 
-                # Создаем караоке-эффект для каждого слова в фразе
-                karaoke_text = self._create_karaoke_effect(phrase['words'])
-                
-                # Добавляем событие в ASS
-                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{karaoke_text}\n"
-            
-            # Записываем файл
-            with open(ass_path, 'w', encoding='utf-8') as f:
-                f.write(ass_content)
-            
-            logger.info(f"✅ ASS файл создан: {ass_path}")
-            return ass_path
+            # Принудительная очистка памяти
+            import gc
+            gc.collect()
             
         except Exception as e:
-            logger.error(f"❌ Ошибка создания ASS файла: {e}")
-            raise
-    
-    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 4) -> List[Dict]:
-        """Группирует слова в фразы для оптимального отображения (3-4 слова как в Opus.pro)"""
-        phrases = []
-        current_phrase = []
-        
-        for word_data in words_data:
-            current_phrase.append(word_data)
-            
-            # Если достигли максимума слов или это конец предложения
-            if (len(current_phrase) >= max_words_per_phrase or 
-                word_data['word'].endswith(('.', '!', '?', ','))):
-                
-                if current_phrase:
-                    phrases.append({
-                        'words': current_phrase.copy(),
-                        'start': current_phrase[0]['start'],
-                        'end': current_phrase[-1]['end']
-                    })
-                    current_phrase = []
-        
-        # Добавляем оставшиеся слова
-        if current_phrase:
-            phrases.append({
-                'words': current_phrase,
-                'start': current_phrase[0]['start'],
-                'end': current_phrase[-1]['end']
-            })
-        
-        return phrases
-    
-    def _create_karaoke_effect(self, words: List[Dict]) -> str:
-        """
-        Создает караоке-эффект для списка слов
-        Формат: {\\kf100}Hello{\\kf150}World
-        """
-        karaoke_parts = []
-        
-        for i, word_data in enumerate(words):
-            word = word_data['word'].strip()
-            if not word:
-                continue
-                
-            # Вычисляем длительность слова в сантисекундах (1/100 секунды)
-            duration = (word_data['end'] - word_data['start']) * 100
-            duration = max(50, min(500, int(duration)))  # Ограничиваем от 0.5 до 5 секунд
-            
-            # Добавляем караоке-тег
-            karaoke_parts.append(f"{{\\kf{duration}}}{word}")
-            
-            # Добавляем пробел между словами (кроме последнего)
-            if i < len(words) - 1:
-                karaoke_parts.append(" ")
-        
-        return "".join(karaoke_parts)
-    
-    def _seconds_to_ass_time(self, seconds: float) -> str:
-        """Конвертирует секунды в формат времени ASS (H:MM:SS.CC)"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        centiseconds = int((seconds % 1) * 100)
-        
-        return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+            logger.error(f"❌ Ошибка в очереди обработки для {video_id}: {e}")
+            task_status[video_id] = {"status": "error", "error": str(e)}
 
-# Инициализируем систему ASS караоке
-ass_subtitle_system = ASSKaraokeSubtitleSystem()
-
-def create_clip_with_ass_subtitles(
-    video_path: str, 
-    start_time: float, 
-    end_time: float, 
-    words_data: List[Dict],
-    output_path: str,
-    format_type: str = "9:16",
-    style: str = "modern"
-) -> bool:
-    """
-    Создает клип с ASS субтитрами (двухэтапный процесс)
-    
-    ЭТАП 1: Создание базового видео с обрезкой
-    ЭТАП 2: Наложение ASS субтитров
-    """
-    try:
-        logger.info(f"🎬 Начинаем создание клипа с ASS субтитрами")
-        logger.info(f"📊 Параметры: {start_time}-{end_time}s, формат {format_type}, стиль {style}")
-        
-        # Нормализация format_type
-        format_type = format_type.replace('_', ':')
-        
-        # Определяем параметры обрезки
-        crop_params = get_crop_parameters(1920, 1080, format_type)  # Предполагаем стандартное разрешение
-        if not crop_params:
-            logger.error(f"❌ Неподдерживаемый формат: {format_type}")
-            return False
-        
-        # Фильтруем слова для данного временного отрезка
-        clip_words = []
-        for word_data in words_data:
-            # Проверяем что слово попадает в временной интервал клипа
-            if (word_data['start'] >= start_time and word_data['start'] < end_time) or \
-               (word_data['end'] > start_time and word_data['end'] <= end_time) or \
-               (word_data['start'] < start_time and word_data['end'] > end_time):
-                
-                # Корректируем время относительно начала клипа
-                word_start = max(0, word_data['start'] - start_time)
-                word_end = min(end_time - start_time, word_data['end'] - start_time)
-                
-                # Добавляем только если есть пересечение
-                if word_end > word_start:
-                    clip_words.append({
-                        'word': word_data['word'],
-                        'start': word_start,
-                        'end': word_end
-                    })
-        
-        logger.info(f"📝 Найдено {len(clip_words)} слов для субтитров")
-        
-        # ЭТАП 1: Создаем базовое видео с обрезкой (БЕЗ субтитров)
-        temp_video_path = output_path.replace('.mp4', '_temp.mp4')
-        
-        base_cmd = [
-            'ffmpeg', '-i', video_path,
-            '-ss', str(start_time),
-            '-t', str(end_time - start_time),
-            '-vf', f"scale={crop_params['scale']},crop={crop_params['crop']}",
-            '-c:v', 'libx264', '-preset', 'fast',
-            '-c:a', 'aac', '-b:a', '128k',
-            '-y', temp_video_path
-        ]
-        
-        logger.info("🎬 ЭТАП 1: Создаем базовое видео...")
-        result = subprocess.run(base_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-        
-        if result.returncode != 0:
-            logger.error(f"❌ ЭТАП 1 неудачен: {result.stderr}")
-            return False
-        
-        logger.info("✅ ЭТАП 1 завершен: базовое видео создано")
-        
-        # ЭТАП 2: Накладываем ASS субтитры
-        if clip_words:
-            try:
-                # Создаем ASS файл
-                ass_path = ass_subtitle_system.generate_ass_file(
-                    clip_words, 
-                    style, 
-                    end_time - start_time
-                )
-                
-                # Применяем ASS субтитры
-                subtitle_cmd = [
-                    'ffmpeg', '-i', temp_video_path,
-                    '-vf', f'ass={ass_path}',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'copy',
-                    '-y', output_path
-                ]
-                
-                logger.info("📝 ЭТАП 2: Накладываем ASS субтитры...")
-                result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-                
-                if result.returncode == 0:
-                    logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
-                    
-                    # Удаляем временные файлы
-                    if os.path.exists(temp_video_path):
-                        os.remove(temp_video_path)
-                    if os.path.exists(ass_path):
-                        os.remove(ass_path)
-                    
-                    return True
-                else:
-                    logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
-                    # Fallback: используем видео без субтитров
-                    if os.path.exists(temp_video_path):
-                        os.rename(temp_video_path, output_path)
-                    logger.info("🔄 Fallback: сохранен клип без субтитров")
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"❌ Ошибка в ЭТАПЕ 2: {e}")
-                # Fallback: используем видео без субтитров
-                if os.path.exists(temp_video_path):
-                    os.rename(temp_video_path, output_path)
-                logger.info("🔄 Fallback: сохранен клип без субтитров")
-                return True
-        else:
-            # Нет слов для субтитров - используем базовое видео
-            if os.path.exists(temp_video_path):
-                os.rename(temp_video_path, output_path)
-            logger.info("✅ Клип создан без субтитров (нет слов)")
-            return True
-            
-    except subprocess.TimeoutExpired:
-        logger.error("❌ Таймаут при создании клипа")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Ошибка создания клипа: {e}")
-        return False
-
-def get_crop_parameters(width: int, height: int, format_type: str) -> Optional[Dict]:
-    """Возвращает параметры обрезки для разных форматов"""
-    
-    formats = {
-        "9:16": {"target_width": 720, "target_height": 1280},  # TikTok/Instagram
-        "16:9": {"target_width": 1280, "target_height": 720}, # YouTube
-        "1:1": {"target_width": 720, "target_height": 720},  # Instagram квадрат
-        "4:5": {"target_width": 720, "target_height": 900}   # Instagram портрет
-    }
-    
-    if format_type not in formats:
-        return None
-    
-    target = formats[format_type]
-    target_width = target["target_width"]
-    target_height = target["target_height"]
-    
-    # Вычисляем масштабирование
-    scale_x = target_width / width
-    scale_y = target_height / height
-    scale = max(scale_x, scale_y)
-    
-    # Новые размеры после масштабирования
-    new_width = int(width * scale)
-    new_height = int(height * scale)
-    
-    # Параметры обрезки для центрирования
-    crop_x = (new_width - target_width) // 2
-    crop_y = (new_height - target_height) // 2
-    
-    return {
-        "scale": f"{new_width}:{new_height}",
-        "crop": f"{target_width}:{target_height}:{crop_x}:{crop_y}"
-    }
-
-# API Endpoints
-
-@app.get("/")
-async def root():
-    """Главная страница API"""
-    return {"message": "AgentFlow AI Clips API v18.3.0", "status": "running"}
-
-@app.get("/health")
-async def health_check():
-    """Проверка состояния сервиса"""
-    # Проверка системных ресурсов
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    
-    # Подсчет файлов
-    upload_count = len([f for f in os.listdir(Config.UPLOAD_DIR) if os.path.isfile(os.path.join(Config.UPLOAD_DIR, f))])
-    clip_count = len([f for f in os.listdir(Config.CLIPS_DIR) if os.path.isfile(os.path.join(Config.CLIPS_DIR, f))])
-    
-    return {
-        "status": "healthy",
-        "version": "18.3.0",
-        "timestamp": datetime.now().isoformat(),
-        "system": {
-            "memory_usage": f"{memory.percent}%",
-            "disk_usage": f"{disk.percent}%",
-            "uploads": upload_count,
-            "clips": clip_count
-        },
-        "services": {
-            "openai": "connected" if openai_api_key else "disconnected",
-            "supabase": "connected" if supabase_available else "disconnected"
-        }
-    }
-
-@app.get("/api/formats")
-async def get_formats():
-    """Получение доступных форматов"""
-    formats = [
-        {
-            "id": "9:16",
-            "name": "Vertical",
-            "dimensions": "720×1280",
-            "description": "TikTok, Instagram Reels, Shorts",
-            "aspect_ratio": 0.5625
-        },
-        {
-            "id": "16:9", 
-            "name": "Horizontal",
-            "dimensions": "1280×720",
-            "description": "YouTube, Facebook",
-            "aspect_ratio": 1.7778
-        },
-        {
-            "id": "1:1",
-            "name": "Square", 
-            "dimensions": "720×720",
-            "description": "Instagram Posts",
-            "aspect_ratio": 1.0
-        },
-        {
-            "id": "4:5",
-            "name": "Portrait",
-            "dimensions": "720×900", 
-            "description": "Instagram Stories",
-            "aspect_ratio": 0.8
-        }
-    ]
-    return {"formats": formats}
-
-@app.get("/api/styles")
-async def get_styles():
-    """Получение доступных стилей субтитров"""
-    styles = []
-    for style_id, config in Config.ASS_STYLES.items():
-        styles.append({
-            "id": style_id,
-            "name": config["name"],
-            "preview_colors": config["preview_colors"],
-            "font": config["fontname"]
-        })
-    return {"styles": styles}
-
+# API эндпоинты
 @app.post("/api/videos/upload")
 async def upload_video(file: UploadFile = File(...)):
-    """Загрузка видео файла"""
+    """Загрузка видео"""
     try:
-        # Проверка размера файла
-        if file.size and file.size > Config.MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="Файл слишком большой")
-        
-        # Генерация уникального ID
+        # Генерируем уникальный ID
         video_id = str(uuid.uuid4())
         
-        # Сохранение файла
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        if file_extension not in ['.mp4', '.mov', '.avi', '.mkv']:
-            raise HTTPException(status_code=400, detail="Неподдерживаемый формат видео")
+        # Путь для сохранения
+        file_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
         
-        video_path = os.path.join(Config.UPLOAD_DIR, f"{video_id}{file_extension}")
+        # Сохраняем файл
+        with open(file_path, "wb") as buffer:
+            buffer.write(await file.read())
         
-        with open(video_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        # Получаем информацию о видео
+        file_size = os.path.getsize(file_path)
+        duration = get_video_duration(file_path)
         
-        # Получение информации о видео
-        duration = get_video_duration(video_path)
-        
-        # Сохранение информации о задаче
-        analysis_tasks[video_id] = {
-            "video_id": video_id,
-            "filename": file.filename,
-            "video_path": video_path,
-            "duration": duration,
-            "size": len(content),
-            "status": "uploaded",
-            "upload_time": datetime.now().isoformat()
-        }
-        
-        logger.info(f"📁 Получен файл: {file.filename} ({len(content)/1024/1024:.1f} MB)")
+        logger.info(f"📁 Получен файл: {file.filename} ({file_size / 1024 / 1024:.1f} MB)")
         logger.info(f"✅ Видео загружено: {video_id}, длительность: {duration:.1f}s")
         
         return {
             "video_id": video_id,
             "filename": file.filename,
+            "size": file_size,
             "duration": duration,
-            "size": len(content),
-            "upload_time": analysis_tasks[video_id]["upload_time"],
-            "status": "uploaded"
+            "status": "uploaded",
+            "upload_time": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Ошибка загрузки видео: {e}")
+        logger.error(f"❌ Ошибка загрузки видео: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/videos/analyze")
 async def analyze_video(request: VideoAnalysisRequest, background_tasks: BackgroundTasks):
-    """Анализ видео для выделения ключевых моментов"""
-    try:
-        video_id = request.video_id
-        
-        if video_id not in analysis_tasks:
-            raise HTTPException(status_code=404, detail="Видео не найдено")
-        
-        # Запуск анализа в фоне
-        background_tasks.add_task(analyze_video_task, video_id)
-        
-        # Обновление статуса
-        analysis_tasks[video_id]["status"] = "analyzing"
-        
-        return {"message": "Анализ запущен", "video_id": video_id}
-    except Exception as e:
-        logger.error(f"Ошибка запуска анализа: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def analyze_video_task(video_id: str):
-    """Фоновая задача анализа видео"""
-    try:
-        analysis_task = analysis_tasks[video_id]
-        video_path = analysis_task["video_path"]
-        video_duration = analysis_task.get("duration", 60)
-        
-        logger.info(f"🔍 Начинаю анализ видео: {video_id}")
-        
-        # Извлечение аудио
-        audio_path = os.path.join(Config.AUDIO_DIR, f"{video_id}.mp3")
-        if not extract_audio(video_path, audio_path):
-            raise Exception("Ошибка извлечения аудио")
-        
-        logger.info(f"🎵 Аудио извлечено: {audio_path}")
-        
-        # Транскрибация
-        transcript_data = safe_transcribe_audio(audio_path)
-        if not transcript_data:
-            raise Exception("Ошибка транскрибации")
-        
-        logger.info(f"📝 Транскрибация завершена")
-        
-        # Анализ с ChatGPT (передаем длительность видео)
-        transcript_text = transcript_data.get('text', '')
-        analysis_result = analyze_with_chatgpt(transcript_text, video_duration)
-        
-        if not analysis_result:
-            # Fallback - создаем клипы автоматически
-            target_clips = 3 if video_duration <= 60 else 5
-            analysis_result = create_fallback_highlights(video_duration, target_clips)
-        
-        highlights = analysis_result.get("highlights", [])
-        
-        # Фильтрация и корректировка highlights
-        valid_highlights = []
-        for highlight in highlights:
-            start_time = highlight.get("start_time", 0)
-            end_time = highlight.get("end_time", 20)
-            
-            # Ограничиваем временные рамки длительностью видео
-            if start_time >= video_duration - 5:  # Минимум 5 секунд до конца
-                continue
-                
-            if end_time > video_duration:
-                end_time = video_duration
-            
-            if end_time - start_time < 5:  # Минимум 5 секунд клип
-                continue
-                
-            highlight["start_time"] = start_time
-            highlight["end_time"] = end_time
-            valid_highlights.append(highlight)
-        
-        # Если все еще нет валидных highlights, создаем принудительно
-        if not valid_highlights:
-            target_clips = 3 if video_duration <= 60 else 5
-            clip_duration = min(18, video_duration / target_clips)
-            
-            for i in range(target_clips):
-                start = i * (clip_duration + 2)  # 2 секунды между клипами
-                end = start + clip_duration
-                
-                if end > video_duration:
-                    end = video_duration
-                    start = max(0, end - clip_duration)
-                
-                if start >= video_duration - 5:
-                    break
-                    
-                valid_highlights.append({
-                    "start_time": start,
-                    "end_time": end,
-                    "title": f"Клип {i+1}",
-                    "description": "Автоматически созданный клип",
-                    "keywords": []
-                })
-        
-        # Обновление результатов
-        analysis_tasks[video_id].update({
-            "status": "completed",
-            "transcript": transcript_data,
-            "analysis": {"highlights": valid_highlights},
-            "completed_at": datetime.now().isoformat()
-        })
-        
-        logger.info(f"✅ Анализ завершен: {video_id}, найдено {len(valid_highlights)} highlights")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка анализа видео {video_id}: {e}")
-        analysis_tasks[video_id].update({
-            "status": "error",
-            "error": str(e),
-            "completed_at": datetime.now().isoformat()
-        })
+    """Анализ видео с постановкой в очередь"""
+    video_id = request.video_id
+    
+    # Проверяем существование видео
+    video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Добавляем в очередь и запускаем обработку
+    logger.info(f"🔍 Начинаю анализ видео: {video_id}")
+    background_tasks.add_task(process_video_queue, video_id)
+    
+    return {"video_id": video_id, "status": "queued"}
 
 @app.get("/api/videos/{video_id}/status")
 async def get_video_status(video_id: str):
-    """Получение статуса анализа видео"""
-    if video_id not in analysis_tasks:
-        raise HTTPException(status_code=404, detail="Видео не найдено")
+    """Получение статуса обработки видео"""
+    if video_id not in task_status:
+        return {"status": "not_found"}
     
-    task = analysis_tasks[video_id]
+    status_data = task_status[video_id]
     
-    response = {
-        "video_id": video_id,
-        "status": task["status"],
-        "filename": task.get("filename"),
-        "duration": task.get("duration"),
-        "upload_time": task.get("upload_time")
-    }
-    
-    if task["status"] == "completed":
-        highlights = task.get("analysis", {}).get("highlights", [])
-        response["highlights"] = highlights
-        response["highlights_count"] = len(highlights)
-    
-    if task["status"] == "error":
-        response["error"] = task.get("error")
-    
-    return response
-
-@app.post("/api/clips/generate")
-async def generate_clips(request: ClipGenerationRequest, background_tasks: BackgroundTasks):
-    """Генерация клипов с субтитрами"""
-    try:
-        video_id = request.video_id
-        format_id = request.format_id
-        style_id = request.style_id
-        
-        if video_id not in analysis_tasks:
-            raise HTTPException(status_code=404, detail="Видео не найдено")
-        
-        analysis_task = analysis_tasks[video_id]
-        if analysis_task["status"] != "completed":
-            raise HTTPException(status_code=400, detail="Анализ видео не завершен")
-        
-        # Генерация уникального ID задачи
-        task_id = str(uuid.uuid4())
-        
-        # Сохранение информации о задаче генерации
-        generation_tasks[task_id] = {
-            "task_id": task_id,
-            "video_id": video_id,
-            "format_id": format_id,
-            "style_id": style_id,
-            "status": "pending",
-            "progress": 0,
-            "clips": [],
-            "created_at": datetime.now().isoformat()
-        }
-        
-        # Запуск генерации в фоне
-        background_tasks.add_task(generate_clips_task, task_id)
-        
-        logger.info(f"🚀 Запущена генерация клипов: {task_id}")
-        
+    # Если обработка завершена, возвращаем результат в нужном формате
+    if status_data.get("status") == "completed" and "result" in status_data:
+        result = status_data["result"]
         return {
-            "task_id": task_id,
-            "message": "Генерация клипов запущена",
-            "video_id": video_id,
-            "format_id": format_id,
-            "style_id": style_id
-        }
-        
-    except Exception as e:
-        logger.error(f"Ошибка запуска генерации клипов: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def generate_clips_task(task_id: str):
-    """Фоновая задача генерации клипов"""
-    try:
-        task = generation_tasks[task_id]
-        video_id = task["video_id"]
-        format_id = task["format_id"]
-        style_id = task["style_id"]
-        
-        analysis_task = analysis_tasks[video_id]
-        video_path = analysis_task["video_path"]
-        highlights = analysis_task["analysis"]["highlights"]
-        transcript_data = analysis_task.get("transcript", {})
-        
-        # Обновление статуса
-        generation_tasks[task_id]["status"] = "generating"
-        
-        logger.info(f"🎬 Начинаю генерацию {len(highlights)} клипов")
-        
-        clips_created = 0
-        total_clips = len(highlights)
-        
-        for i, highlight in enumerate(highlights):
-            try:
-                start_time = highlight["start_time"]
-                end_time = highlight["end_time"]
-                
-                logger.info(f"🎬 Создаю клип {i+1}/{total_clips}: {start_time}-{end_time}s")
-                
-                # Обновление прогресса
-                progress = int((i / total_clips) * 100)
-                generation_tasks[task_id]["progress"] = progress
-                generation_tasks[task_id]["current_stage"] = f"Создание клипа {i+1}/{total_clips}"
-                
-                # Получение слов для субтитров в диапазоне времени
-                words_in_range = []
-                if 'words' in transcript_data:
-                    for word_data in transcript_data['words']:
-                        word_start = word_data.get('start', 0)
-                        word_end = word_data.get('end', 0)
-                        
-                        # Проверяем пересечение с диапазоном клипа
-                        if word_start < end_time and word_end > start_time:
-                            # Корректируем время относительно начала клипа
-                            adjusted_word = word_data.copy()
-                            adjusted_word['start'] = max(0, word_start - start_time)
-                            adjusted_word['end'] = min(end_time - start_time, word_end - start_time)
-                            words_in_range.append(adjusted_word)
-                
-                logger.info(f"📝 Найдено {len(words_in_range)} слов для субтитров")
-                
-                # Создание ASS файла
-                style_config = Config.ASS_STYLES.get(style_id, Config.ASS_STYLES["modern"])
-                ass_filename = f"{task_id}_clip_{i+1}.ass"
-                ass_path = os.path.join(Config.ASS_DIR, ass_filename)
-                
-                if words_in_range:
-                    create_ass_subtitle_file(words_in_range, style_config, ass_path)
-                else:
-                    # Создаем пустой ASS файл если нет слов
-                    with open(ass_path, 'w', encoding='utf-8') as f:
-                        f.write("""[Script Info]
-Title: Empty Subtitles
-ScriptType: v4.00+
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,16,&Hffffff,&H00ff00,&H000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,10,10,60,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""")
-                
-                # Создание клипа
-                clip_filename = f"{task_id}_clip_{i+1}_{format_id.replace(':', 'x')}.mp4"
-                clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
-                
-                success = create_clip_with_ass_subtitles(
-                    video_path, start_time, end_time, format_id, ass_path, clip_path
-                )
-                
-                if success:
-                    # Загрузка клипа в Supabase Storage
-                    supabase_url = upload_clip_to_supabase(clip_path, clip_filename)
-                    
-                    clip_info = {
-                        "id": f"{task_id}_clip_{i+1}",
-                        "title": highlight.get("title", f"Клип {i+1}"),
-                        "description": highlight.get("description", ""),
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "duration": end_time - start_time,
-                        "filename": clip_filename,
-                        "download_url": supabase_url,
-                        "format": format_id,
-                        "style": style_id,
-                        "size": os.path.getsize(clip_path) if os.path.exists(clip_path) else 0
-                    }
-                    
-                    generation_tasks[task_id]["clips"].append(clip_info)
-                    clips_created += 1
-                    
-                    logger.info(f"✅ Клип {i+1} создан: {clip_filename}, размер: {clip_info['size']} байт")
-                else:
-                    logger.error(f"❌ Ошибка создания клипа {i+1}")
-                
-            except Exception as clip_error:
-                logger.error(f"❌ Ошибка создания клипа {i+1}: {clip_error}")
-                continue
-        
-        # Завершение генерации
-        generation_tasks[task_id].update({
             "status": "completed",
-            "progress": 100,
-            "current_stage": "Завершено",
-            "clips_created": clips_created,
-            "completed_at": datetime.now().isoformat()
-        })
-        
-        logger.info(f"🎉 Генерация завершена: {task_id}, создано {clips_created} клипов")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка генерации клипов {task_id}: {e}")
-        generation_tasks[task_id].update({
-            "status": "error",
-            "error": str(e),
-            "completed_at": datetime.now().isoformat()
-        })
+            "video_id": video_id,
+            "transcript": result.get("transcript", {"segments": []}),
+            "highlights": result.get("highlights", [])
+        }
+    
+    # Иначе возвращаем текущий статус
+    return status_data
 
-@app.get("/api/clips/generation/{task_id}/status")
-async def get_generation_status(task_id: str):
-    """Получение статуса генерации клипов"""
-    if task_id not in generation_tasks:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
+@app.get("/api/videos/{video_id}/transcript")
+async def get_video_transcript(video_id: str):
+    """Получение транскрипта видео"""
+    # Проверяем статус задачи
+    if video_id in task_status:
+        status_data = task_status[video_id]
+        if status_data.get("status") == "completed" and "result" in status_data:
+            result = status_data["result"]
+            return result.get("transcript", {"segments": []})
     
-    task = generation_tasks[task_id]
+    # Проверяем наличие сохраненного транскрипта
+    transcript_path = os.path.join(RESULTS_DIR, f"{video_id}_transcript.json")
+    if os.path.exists(transcript_path):
+        with open(transcript_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
     
-    response = {
-        "task_id": task_id,
-        "status": task["status"],
-        "progress": task.get("progress", 0),
-        "current_stage": task.get("current_stage"),
-        "clips_created": len(task.get("clips", [])),
-        "created_at": task.get("created_at")
-    }
-    
-    if task["status"] == "completed":
-        response["clips"] = task.get("clips", [])
-        response["completed_at"] = task.get("completed_at")
-    
-    if task["status"] == "error":
-        response["error"] = task.get("error")
-    
-    return response
+    raise HTTPException(status_code=404, detail="Transcript not found")
 
-@app.get("/api/clips/download/{filename}")
-async def download_clip(filename: str):
-    """Скачивание клипа (fallback для локального хранения)"""
-    file_path = os.path.join(Config.CLIPS_DIR, filename)
+@app.get("/api/videos/{video_id}/highlights")
+async def get_video_highlights(video_id: str):
+    """Получение выделенных моментов видео"""
+    # Проверяем статус задачи
+    if video_id in task_status:
+        status_data = task_status[video_id]
+        if status_data.get("status") == "completed" and "result" in status_data:
+            result = status_data["result"]
+            return {"highlights": result.get("highlights", [])}
     
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Файл не найден")
+    # Проверяем наличие сохраненного анализа
+    analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+    if os.path.exists(analysis_path):
+        with open(analysis_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    
+    raise HTTPException(status_code=404, detail="Highlights not found")
+
+@app.get("/api/videos/{video_id}/download")
+async def download_video(video_id: str):
+    """Скачивание исходного видео"""
+    video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
     
     return FileResponse(
-        file_path,
-        media_type="video/mp4",
-        filename=filename
+        path=video_path,
+        filename=f"{video_id}.mp4",
+        media_type="video/mp4"
     )
+
+@app.get("/health")
+async def health_check():
+    """Проверка работоспособности API"""
+    return {
+        "status": "ok",
+        "version": "21.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "whisper_model": "tiny" if whisper_model is not None else None,
+        "supabase_available": supabase_available,
+        "queue_size": len(task_status),
+        "processing_tasks": sum(1 for status in task_status.values() 
+                               if status.get("status") == "processing"),
+        "queued_tasks": sum(1 for status in task_status.values() 
+                           if status.get("status") == "queued")
+    }
 
 # ASS субтитры endpoints
-@app.post("/api/subtitles/generate-ass")
-async def generate_ass_subtitles(
-    video_id: str,
-    karaoke_mode: bool = True,
-    effect_type: str = "highlight",
-    style_name: str = "modern"
-):
-    """
-    Генерирует ASS субтитры с караоке-эффектами
+@app.get("/api/videos/{video_id}/subtitles/ass")
+async def get_video_ass_subtitles(video_id: str):
+    """Получение ASS субтитров для видео"""
+    # Проверяем статус задачи
+    if video_id not in task_status or task_status[video_id].get("status") != "completed":
+        raise HTTPException(status_code=404, detail="Video processing not completed")
     
-    Args:
-        video_id: ID видео
-        karaoke_mode: Включить караоке-эффекты
-        effect_type: Тип эффекта (highlight, glow, wave, typewriter)
-        style_name: Стиль субтитров (modern, neon, fire)
-    """
     try:
-        # Проверяем существование видео
-        if video_id not in video_tasks:
-            raise HTTPException(status_code=404, detail="Видео не найдено")
+        # Получаем транскрипт
+        transcript_path = os.path.join(RESULTS_DIR, f"{video_id}_transcript.json")
+        if not os.path.exists(transcript_path):
+            raise HTTPException(status_code=404, detail="Transcript not found")
         
-        video_task = video_tasks[video_id]
+        with open(transcript_path, 'r', encoding='utf-8') as f:
+            transcript = json.load(f)
         
-        if video_task["status"] != "completed":
-            raise HTTPException(status_code=400, detail="Видео еще не обработано")
+        # Генерируем ASS субтитры
+        from ass_generator import ASSGenerator
+        ass_generator = ASSGenerator()
         
-        # Получаем данные субтитров
-        subtitle_data = video_task.get("subtitle_data")
-        if not subtitle_data:
-            raise HTTPException(status_code=400, detail="Субтитры не найдены")
+        # Путь для сохранения
+        ass_path = os.path.join(RESULTS_DIR, f"{video_id}.ass")
         
-        # Создаем директорию для ASS файлов
-        os.makedirs(Config.ASS_DIR, exist_ok=True)
+        # Генерируем и сохраняем
+        ass_content = ass_generator.generate_from_whisper(transcript)
+        with open(ass_path, 'w', encoding='utf-8') as f:
+            f.write(ass_content)
         
-        # Генерируем ASS файл
-        ass_filename = f"{video_id}_karaoke.ass"
-        ass_path = os.path.join(Config.ASS_DIR, ass_filename)
-        
-        # Применяем выбранный стиль
-        if style_name in Config.ASS_STYLES:
-            style_config = Config.ASS_STYLES[style_name]
-            ass_generator.karaoke_style.update({
-                'font_name': style_config['fontname'],
-                'font_size': style_config['fontsize'],
-                'primary_color': style_config['primarycolor'],
-                'secondary_color': style_config['secondarycolor']
-            })
-        
-        # Генерируем ASS файл
-        generated_path = ass_generator.generate_ass_from_whisperx(
-            subtitle_data,
-            ass_path,
-            karaoke_mode=karaoke_mode
+        return FileResponse(
+            path=ass_path,
+            filename=f"{video_id}.ass",
+            media_type="text/plain"
         )
-        
-        # Генерируем SRT для совместимости
-        srt_filename = f"{video_id}_subtitles.srt"
-        srt_path = os.path.join(Config.ASS_DIR, srt_filename)
-        srt_generated_path = ass_generator.generate_srt_from_whisperx(
-            subtitle_data,
-            srt_path
-        )
-        
-        logger.info(f"ASS субтитры созданы: {generated_path}")
-        logger.info(f"SRT субтитры созданы: {srt_generated_path}")
-        
-        return {
-            "success": True,
-            "ass_file": ass_filename,
-            "srt_file": srt_filename,
-            "download_urls": {
-                "ass": f"/api/subtitles/download/{ass_filename}",
-                "srt": f"/api/subtitles/download/{srt_filename}"
-            },
-            "style": style_name,
-            "karaoke_mode": karaoke_mode,
-            "effect_type": effect_type
-        }
-        
     except Exception as e:
-        logger.error(f"Ошибка генерации ASS субтитров: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка генерации субтитров: {str(e)}")
-
-@app.get("/api/subtitles/download/{filename}")
-async def download_subtitles(filename: str):
-    """Скачивание ASS/SRT субтитров"""
-    file_path = os.path.join(Config.ASS_DIR, filename)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Файл субтитров не найден")
-    
-    # Определяем MIME тип
-    if filename.endswith('.ass'):
-        media_type = "text/plain"
-    elif filename.endswith('.srt'):
-        media_type = "text/plain"
-    else:
-        media_type = "application/octet-stream"
-    
-    return FileResponse(
-        file_path,
-        media_type=media_type,
-        filename=filename
-    )
-
-@app.get("/api/subtitles/styles")
-async def get_subtitle_styles():
-    """Получить доступные стили субтитров"""
-    return {
-        "styles": {
-            name: {
-                "name": config["name"],
-                "fontname": config["fontname"],
-                "preview_colors": config.get("preview_colors", ["#ffffff", "#00ff00", "#000000"])
-            }
-            for name, config in Config.ASS_STYLES.items()
-        }
-    }
-
-@app.get("/api/subtitles/preview/{video_id}")
-async def preview_subtitles(video_id: str, style_name: str = "modern"):
-    """Предварительный просмотр субтитров"""
-    try:
-        if video_id not in video_tasks:
-            raise HTTPException(status_code=404, detail="Видео не найдено")
-        
-        video_task = video_tasks[video_id]
-        subtitle_data = video_task.get("subtitle_data")
-        
-        if not subtitle_data:
-            raise HTTPException(status_code=400, detail="Субтитры не найдены")
-        
-        # Берем первые 3 сегмента для предварительного просмотра
-        segments = subtitle_data.get("segments", [])[:3]
-        
-        preview_data = {
-            "style": style_name,
-            "segments": segments,
-            "style_config": Config.ASS_STYLES.get(style_name, Config.ASS_STYLES["modern"])
-        }
-        
-        return preview_data
-        
-    except Exception as e:
-        logger.error(f"Ошибка предварительного просмотра: {str(e)}")
+        logger.error(f"❌ Ошибка генерации ASS субтитров: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    
-    logger.info("🚀 AgentFlow AI Clips v20.1.0 started!")
-    logger.info("🎬 WhisperX + ASS караоке-система активирована")
-    logger.info("🔥 Продвинутые субтитры как в Opus.pro")
-    logger.info("⚡ Двухэтапная генерация клипов")
-    
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-
-
-# Импорт видео бернера
-from video_burner import VideoBurner
-
-# Инициализация видео бернера
-video_burner = VideoBurner()
-
-# Burned-in видео endpoints
-@app.post("/api/videos/burn-subtitles")
-async def burn_subtitles_to_video(
-    video_id: str,
-    quality: str = "high",
-    style_name: str = "modern",
-    include_preview: bool = True
-):
-    """
-    Создает видео с вшитыми субтитрами
-    
-    Args:
-        video_id: ID видео
-        quality: Качество видео (low, medium, high, ultra)
-        style_name: Стиль субтитров
-        include_preview: Создать превью
-    """
-    try:
-        # Проверяем существование видео
-        if video_id not in video_tasks:
-            raise HTTPException(status_code=404, detail="Видео не найдено")
-        
-        video_task = video_tasks[video_id]
-        
-        if video_task["status"] != "completed":
-            raise HTTPException(status_code=400, detail="Видео еще не обработано")
-        
-        # Получаем путь к оригинальному видео
-        original_video_path = video_task.get("file_path")
-        if not original_video_path or not os.path.exists(original_video_path):
-            raise HTTPException(status_code=400, detail="Оригинальное видео не найдено")
-        
-        # Создаем ASS субтитры если их нет
-        ass_dir = Config.ASS_DIR
-        os.makedirs(ass_dir, exist_ok=True)
-        
-        ass_filename = f"{video_id}_karaoke.ass"
-        ass_path = os.path.join(ass_dir, ass_filename)
-        
-        # Генерируем ASS файл если его нет
-        if not os.path.exists(ass_path):
-            subtitle_data = video_task.get("subtitle_data")
-            if not subtitle_data:
-                raise HTTPException(status_code=400, detail="Субтитры не найдены")
-            
-            # Применяем стиль
-            if style_name in Config.ASS_STYLES:
-                style_config = Config.ASS_STYLES[style_name]
-                ass_generator.karaoke_style.update({
-                    'font_name': style_config['fontname'],
-                    'font_size': style_config['fontsize'],
-                    'primary_color': style_config['primarycolor'],
-                    'secondary_color': style_config['secondarycolor']
-                })
-            
-            ass_generator.generate_ass_from_whisperx(
-                subtitle_data,
-                ass_path,
-                karaoke_mode=True
-            )
-        
-        # Создаем директорию для burned-in видео
-        burned_dir = "burned_videos"
-        os.makedirs(burned_dir, exist_ok=True)
-        
-        # Создаем burned-in видео
-        burned_filename = f"{video_id}_burned_{quality}.mp4"
-        burned_path = os.path.join(burned_dir, burned_filename)
-        
-        # Запускаем создание видео с субтитрами
-        logger.info(f"Создание видео с субтитрами: {burned_path}")
-        
-        def progress_callback(progress):
-            # Обновляем прогресс в задаче
-            video_task["burn_progress"] = progress
-            logger.info(f"Прогресс создания видео: {progress:.1f}%")
-        
-        # Создаем видео с субтитрами
-        result_path = video_burner.burn_subtitles(
-            original_video_path,
-            ass_path,
-            burned_path,
-            quality=quality,
-            progress_callback=progress_callback
-        )
-        
-        response_data = {
-            "success": True,
-            "burned_video": burned_filename,
-            "download_url": f"/api/videos/download-burned/{burned_filename}",
-            "quality": quality,
-            "style": style_name,
-            "file_size": os.path.getsize(result_path) if os.path.exists(result_path) else 0
-        }
-        
-        # Создаем превью если запрошено
-        if include_preview:
-            try:
-                preview_filename = f"{video_id}_preview_{quality}.mp4"
-                preview_path = os.path.join(burned_dir, preview_filename)
-                
-                preview_result = video_burner.create_preview_video(
-                    original_video_path,
-                    ass_path,
-                    preview_path,
-                    start_time=10,  # Начинаем с 10 секунды
-                    duration=15     # 15 секунд превью
-                )
-                
-                response_data["preview"] = {
-                    "filename": preview_filename,
-                    "download_url": f"/api/videos/download-burned/{preview_filename}",
-                    "duration": 15
-                }
-                
-                logger.info(f"Превью создано: {preview_result}")
-                
-            except Exception as e:
-                logger.warning(f"Ошибка создания превью: {str(e)}")
-                # Превью не критично, продолжаем без него
-        
-        logger.info(f"Видео с субтитрами создано: {result_path}")
-        return response_data
-        
-    except Exception as e:
-        logger.error(f"Ошибка создания видео с субтитрами: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка создания видео: {str(e)}")
-
-@app.post("/api/clips/burn-subtitles-batch")
-async def burn_subtitles_to_clips(
-    task_id: str,
-    quality: str = "high",
-    style_name: str = "modern"
-):
-    """
-    Создает клипы с вшитыми субтитрами (массовая обработка)
-    
-    Args:
-        task_id: ID задачи генерации клипов
-        quality: Качество видео
-        style_name: Стиль субтитров
-    """
-    try:
-        # Проверяем существование задачи
-        if task_id not in clip_tasks:
-            raise HTTPException(status_code=404, detail="Задача не найдена")
-        
-        clip_task = clip_tasks[task_id]
-        
-        if clip_task["status"] != "completed":
-            raise HTTPException(status_code=400, detail="Клипы еще не созданы")
-        
-        clips = clip_task.get("clips", [])
-        if not clips:
-            raise HTTPException(status_code=400, detail="Клипы не найдены")
-        
-        # Получаем video_id из задачи
-        video_id = clip_task.get("video_id")
-        if not video_id or video_id not in video_tasks:
-            raise HTTPException(status_code=400, detail="Исходное видео не найдено")
-        
-        # Создаем ASS субтитры
-        ass_dir = Config.ASS_DIR
-        os.makedirs(ass_dir, exist_ok=True)
-        
-        ass_filename = f"{video_id}_karaoke.ass"
-        ass_path = os.path.join(ass_dir, ass_filename)
-        
-        # Генерируем ASS файл если его нет
-        if not os.path.exists(ass_path):
-            video_task = video_tasks[video_id]
-            subtitle_data = video_task.get("subtitle_data")
-            if not subtitle_data:
-                raise HTTPException(status_code=400, detail="Субтитры не найдены")
-            
-            # Применяем стиль
-            if style_name in Config.ASS_STYLES:
-                style_config = Config.ASS_STYLES[style_name]
-                ass_generator.karaoke_style.update({
-                    'font_name': style_config['fontname'],
-                    'font_size': style_config['fontsize'],
-                    'primary_color': style_config['primarycolor'],
-                    'secondary_color': style_config['secondarycolor']
-                })
-            
-            ass_generator.generate_ass_from_whisperx(
-                subtitle_data,
-                ass_path,
-                karaoke_mode=True
-            )
-        
-        # Подготавливаем список клипов для обработки
-        clip_list = []
-        for clip in clips:
-            clip_path = clip.get("file_path")
-            clip_name = clip.get("title", "clip")
-            
-            if clip_path and os.path.exists(clip_path):
-                clip_list.append({
-                    "path": clip_path,
-                    "name": clip_name.replace(" ", "_")  # Убираем пробелы из имени
-                })
-        
-        if not clip_list:
-            raise HTTPException(status_code=400, detail="Нет доступных клипов для обработки")
-        
-        # Создаем директорию для burned-in клипов
-        burned_clips_dir = f"burned_clips_{task_id}"
-        os.makedirs(burned_clips_dir, exist_ok=True)
-        
-        # Массовая обработка клипов
-        logger.info(f"Начинаем массовую обработку {len(clip_list)} клипов")
-        
-        burned_clips = video_burner.batch_burn_subtitles(
-            clip_list,
-            ass_path,
-            burned_clips_dir,
-            quality=quality
-        )
-        
-        # Формируем ответ
-        response_clips = []
-        for burned_path in burned_clips:
-            filename = os.path.basename(burned_path)
-            response_clips.append({
-                "filename": filename,
-                "download_url": f"/api/clips/download-burned/{filename}",
-                "file_size": os.path.getsize(burned_path) if os.path.exists(burned_path) else 0
-            })
-        
-        logger.info(f"Создано {len(burned_clips)} клипов с субтитрами")
-        
-        return {
-            "success": True,
-            "clips_processed": len(burned_clips),
-            "total_clips": len(clip_list),
-            "quality": quality,
-            "style": style_name,
-            "clips": response_clips
-        }
-        
-    except Exception as e:
-        logger.error(f"Ошибка массовой обработки клипов: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка обработки клипов: {str(e)}")
-
-@app.get("/api/videos/download-burned/{filename}")
-async def download_burned_video(filename: str):
-    """Скачивание видео с вшитыми субтитрами"""
-    file_path = os.path.join("burned_videos", filename)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    
-    return FileResponse(
-        file_path,
-        media_type="video/mp4",
-        filename=filename
-    )
-
-@app.get("/api/clips/download-burned/{filename}")
-async def download_burned_clip(filename: str):
-    """Скачивание клипа с вшитыми субтитрами"""
-    # Ищем файл во всех директориях burned_clips_*
-    for root, dirs, files in os.walk("."):
-        if filename in files and "burned_clips_" in root:
-            file_path = os.path.join(root, filename)
-            return FileResponse(
-                file_path,
-                media_type="video/mp4",
-                filename=filename
-            )
-    
-    raise HTTPException(status_code=404, detail="Файл не найден")
-
-@app.get("/api/videos/burn-progress/{video_id}")
-async def get_burn_progress(video_id: str):
-    """Получить прогресс создания видео с субтитрами"""
-    if video_id not in video_tasks:
-        raise HTTPException(status_code=404, detail="Видео не найдено")
-    
-    video_task = video_tasks[video_id]
-    burn_progress = video_task.get("burn_progress", 0)
-    
-    return {
-        "video_id": video_id,
-        "progress": burn_progress,
-        "status": "processing" if burn_progress < 100 else "completed"
-    }
+    uvicorn.run(app, host="0.0.0.0", port=10000)
 

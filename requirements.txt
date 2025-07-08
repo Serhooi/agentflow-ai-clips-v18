@@ -1,9 +1,5 @@
-# AgentFlow AI Clips v20.1.1 - WhisperX Upgrade (NumPy fix)
-# Совместимые зависимости для стабильной работы
-
-# КРИТИЧНО: NumPy < 2.0 для совместимости с WhisperX
-numpy<2.0
-scipy<1.12.0
+# AgentFlow AI Clips v21.0.0 - Whisper.cpp Upgrade with Queue System
+# Оптимизированные зависимости для стабильной работы на Render.com
 
 # Core FastAPI
 fastapi==0.104.1
@@ -13,12 +9,11 @@ python-multipart==0.0.6
 # OpenAI
 openai==1.55.3
 
-# WhisperX для улучшенных субтитров (совместимые версии)
-whisperx==3.1.1
-torch==2.0.1
-torchaudio==2.0.2
+# Whisper.cpp (через faster-whisper) - легкая и быстрая версия
 faster-whisper==0.10.0
-transformers==4.35.2
+# Ограничиваем NumPy для совместимости
+numpy<2.0
+scipy<1.12.0
 
 # Обработка видео/аудио
 moviepy==1.0.3
@@ -35,6 +30,3 @@ httpx==0.24.1
 
 # Дополнительные зависимости для стабильности
 typing-extensions>=4.0.0
-
-# FFmpeg для burned-in видео
-ffmpeg-python==0.2.0
