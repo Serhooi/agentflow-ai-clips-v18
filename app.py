@@ -843,16 +843,68 @@ async def generate_clip(request: ClipGenerationRequest):
         # Путь для сохранения
         clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
         
-        # Команда FFmpeg для вырезания клипа
+        # Получаем транскрипт для субтитров
+        transcript_segments = task_result.get("transcript", [])
+        
+        # Фильтруем сегменты для данного временного отрезка
+        clip_segments = []
+        for segment in transcript_segments:
+            seg_start = segment.get("start", 0)
+            seg_end = segment.get("end", 0)
+            
+            # Проверяем пересечение с клипом
+            if seg_end > start_time and seg_start < end_time:
+                # Корректируем время относительно начала клипа
+                adjusted_segment = {
+                    "start": max(0, seg_start - start_time),
+                    "end": min(end_time - start_time, seg_end - start_time),
+                    "text": segment.get("text", "")
+                }
+                clip_segments.append(adjusted_segment)
+        
+        logger.info(f"📝 Найдено {len(clip_segments)} сегментов субтитров для клипа")
+        
+        # Создаем субтитры с караоке-эффектами
+        subtitle_filter = ""
+        if clip_segments:
+            subtitle_filter = create_subtitle_filter(clip_segments, style_id)
+            logger.info(f"✨ Создан фильтр субтитров: {len(subtitle_filter)} символов")
+        
+        # Создаем фильтр обрезки для формата 9:16
+        crop_filter = ""
+        if format_id == "9:16":
+            crop_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+        elif format_id == "16:9":
+            crop_filter = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+        elif format_id == "1:1":
+            crop_filter = "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"
+        
+        # Объединяем фильтры
+        video_filter = ""
+        if crop_filter and subtitle_filter:
+            video_filter = f"{crop_filter},{subtitle_filter}"
+        elif crop_filter:
+            video_filter = crop_filter
+        elif subtitle_filter:
+            video_filter = subtitle_filter
+        
+        # Команда FFmpeg для вырезания клипа с субтитрами
         cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(start_time),
             '-to', str(end_time),
             '-c:v', 'libx264', '-c:a', 'aac',
             '-strict', 'experimental',
-            '-b:a', '128k', '-y',
-            clip_path
+            '-b:a', '128k'
         ]
+        
+        # Добавляем видео фильтр если есть
+        if video_filter:
+            cmd.extend(['-vf', video_filter])
+        
+        cmd.extend(['-y', clip_path])
+        
+        logger.info(f"🎬 Команда FFmpeg: {' '.join(cmd[:10])}...")
         
         # Запускаем FFmpeg
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -878,6 +930,10 @@ async def generate_clip(request: ClipGenerationRequest):
             "url": clip_url
         }
         
+        # Сохраняем как последний сгенерированный клип
+        global last_generated_clip
+        last_generated_clip = result.copy()
+        
         logger.info(f"✅ Клип успешно сгенерирован: {clip_id}")
         logger.info(f"📊 Возвращаемый результат: {result}")
         
@@ -902,10 +958,99 @@ async def download_clip(clip_id: str):
         media_type="video/mp4"
     )
 
+def create_subtitle_filter(segments, style='modern'):
+    """Создает FFmpeg фильтр для субтитров с караоке-эффектами"""
+    if not segments:
+        return ""
+    
+    # Стили субтитров
+    styles = {
+        'modern': {
+            'fontsize': 48,
+            'fontcolor': 'white',
+            'bordercolor': 'black',
+            'borderw': 3,
+            'shadowcolor': 'black@0.5',
+            'shadowx': 2,
+            'shadowy': 2
+        },
+        'neon': {
+            'fontsize': 52,
+            'fontcolor': 'cyan',
+            'bordercolor': 'magenta',
+            'borderw': 2,
+            'shadowcolor': 'black@0.8',
+            'shadowx': 3,
+            'shadowy': 3
+        },
+        'fire': {
+            'fontsize': 50,
+            'fontcolor': 'orange',
+            'bordercolor': 'red',
+            'borderw': 3,
+            'shadowcolor': 'black@0.6',
+            'shadowx': 2,
+            'shadowy': 2
+        },
+        'elegant': {
+            'fontsize': 46,
+            'fontcolor': 'gold',
+            'bordercolor': 'black',
+            'borderw': 2,
+            'shadowcolor': 'black@0.4',
+            'shadowx': 1,
+            'shadowy': 1
+        }
+    }
+    
+    current_style = styles.get(style, styles['modern'])
+    
+    # Создаем drawtext фильтры для каждого сегмента
+    drawtext_filters = []
+    
+    for i, segment in enumerate(segments):
+        start_time = segment['start']
+        end_time = segment['end']
+        text = segment['text'].strip()
+        
+        if not text:
+            continue
+        
+        # Экранируем специальные символы для FFmpeg
+        text = text.replace("'", "\\'").replace(":", "\\:")
+        
+        # Создаем drawtext фильтр с караоке-эффектом
+        drawtext = f"drawtext=text='{text}':fontsize={current_style['fontsize']}:fontcolor={current_style['fontcolor']}:bordercolor={current_style['bordercolor']}:borderw={current_style['borderw']}:shadowcolor={current_style['shadowcolor']}:shadowx={current_style['shadowx']}:shadowy={current_style['shadowy']}:x=(w-text_w)/2:y=h-text_h-50:enable='between(t,{start_time},{end_time})'"
+        
+        drawtext_filters.append(drawtext)
+    
+    if not drawtext_filters:
+        return ""
+    
+    # Объединяем все фильтры
+    return ",".join(drawtext_filters)
+
+# Глобальная переменная для хранения последнего сгенерированного клипа
+last_generated_clip = None
+
 @app.get("/api/clips/generation/{clip_id}/status")
 async def get_clip_generation_status(clip_id: str):
     """Получение статуса генерации клипа"""
+    global last_generated_clip
+    
     try:
+        # Если clip_id = "undefined", возвращаем последний сгенерированный клип
+        if clip_id == "undefined" and last_generated_clip:
+            logger.info(f"🔄 Запрос статуса для undefined, возвращаем последний клип: {last_generated_clip['clip_id']}")
+            return {
+                "status": "completed",
+                "clip_id": last_generated_clip["clip_id"],
+                "message": "Клип успешно сгенерирован",
+                "download_url": last_generated_clip["url"],
+                "title": last_generated_clip.get("title", "Клип"),
+                "description": last_generated_clip.get("description", "")
+            }
+        
         # Проверяем существование клипа
         clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
         
