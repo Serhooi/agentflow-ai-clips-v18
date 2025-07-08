@@ -792,24 +792,43 @@ async def generate_clip(request: ClipGenerationRequest):
     style_id = request.style_id
     
     try:
+        logger.info(f"🔄 Генерация клипа для видео {video_id}, формат {format_id}, стиль {style_id}")
+        
         # Проверяем существование видео
         video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
         if not os.path.exists(video_path):
+            logger.error(f"❌ Видео не найдено: {video_path}")
             raise HTTPException(status_code=404, detail="Video not found")
         
         # Проверяем завершение обработки
-        if video_id not in task_status or task_status[video_id].get("status") != "completed":
-            raise HTTPException(status_code=400, detail="Video processing not completed")
+        if video_id not in task_status:
+            logger.error(f"❌ Видео {video_id} не найдено в статусах задач")
+            raise HTTPException(status_code=400, detail="Video not found in task status")
         
-        # Получаем выделенные моменты
-        analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
-        if not os.path.exists(analysis_path):
-            raise HTTPException(status_code=404, detail="Analysis not found")
+        if task_status[video_id].get("status") != "completed":
+            current_status = task_status[video_id].get("status", "unknown")
+            logger.error(f"❌ Видео {video_id} не завершено. Текущий статус: {current_status}")
+            raise HTTPException(status_code=400, detail=f"Video processing not completed. Status: {current_status}")
         
-        with open(analysis_path, 'r', encoding='utf-8') as f:
-            analysis = json.load(f)
+        logger.info(f"✅ Видео {video_id} успешно обработано, получаем highlights")
         
-        highlights = analysis.get("highlights", [])
+        # Получаем выделенные моменты из статуса задачи
+        task_result = task_status[video_id].get("result", {})
+        highlights = task_result.get("highlights", [])
+        
+        logger.info(f"📊 Найдено {len(highlights)} highlights в статусе задачи")
+        
+        # Если нет в статусе, пробуем загрузить из файла
+        if not highlights:
+            logger.info("🔍 Highlights не найдены в статусе, ищем в файле...")
+            analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+            if os.path.exists(analysis_path):
+                with open(analysis_path, 'r', encoding='utf-8') as f:
+                    analysis = json.load(f)
+                highlights = analysis.get("highlights", [])
+                logger.info(f"📊 Найдено {len(highlights)} highlights в файле")
+            else:
+                logger.warning(f"⚠️ Файл анализа не найден: {analysis_path}")
         if not highlights:
             raise HTTPException(status_code=404, detail="No highlights found")
         
