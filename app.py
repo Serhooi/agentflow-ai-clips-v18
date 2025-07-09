@@ -161,6 +161,7 @@ class ClipGenerationRequest(BaseModel):
     video_id: str
     format_id: str
     style_id: str = "modern"
+    highlight_index: int = 0  # Индекс highlight для генерации (0-4)
 
 class VideoInfo(BaseModel):
     id: str
@@ -832,10 +833,17 @@ async def generate_clip(request: ClipGenerationRequest):
         if not highlights:
             raise HTTPException(status_code=404, detail="No highlights found")
         
-        # Генерируем клип для первого выделенного момента
-        highlight = highlights[0]
+        # Генерируем клип для выбранного highlight
+        highlight_index = request.highlight_index
+        if highlight_index >= len(highlights):
+            logger.warning(f"⚠️ Запрошенный индекс {highlight_index} больше количества highlights {len(highlights)}, используем последний")
+            highlight_index = len(highlights) - 1
+        
+        highlight = highlights[highlight_index]
         start_time = highlight["start_time"]
         end_time = highlight["end_time"]
+        
+        logger.info(f"🎬 Генерируем клип #{highlight_index + 1} из {len(highlights)}: {start_time}s - {end_time}s")
         
         # Генерируем уникальный ID для клипа
         clip_id = str(uuid.uuid4())
@@ -945,6 +953,163 @@ async def generate_clip(request: ClipGenerationRequest):
         logger.error(f"❌ Ошибка генерации клипа: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/clips/generate-all")
+async def generate_all_clips(request: ClipGenerationRequest):
+    """Генерация всех клипов из видео"""
+    video_id = request.video_id
+    format_id = request.format_id
+    style_id = request.style_id
+    
+    try:
+        logger.info(f"🔄 Генерация всех клипов для видео {video_id}, формат {format_id}, стиль {style_id}")
+        
+        # Проверяем существование видео
+        video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+        if not os.path.exists(video_path):
+            logger.error(f"❌ Видео не найдено: {video_path}")
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # Проверяем завершение обработки
+        if video_id not in task_status:
+            logger.error(f"❌ Видео {video_id} не найдено в статусах задач")
+            raise HTTPException(status_code=400, detail="Video not found in task status")
+        
+        if task_status[video_id].get("status") != "completed":
+            current_status = task_status[video_id].get("status", "unknown")
+            logger.error(f"❌ Видео {video_id} не завершено. Текущий статус: {current_status}")
+            raise HTTPException(status_code=400, detail=f"Video processing not completed. Status: {current_status}")
+        
+        # Получаем выделенные моменты
+        task_result = task_status[video_id].get("result", {})
+        highlights = task_result.get("highlights", [])
+        
+        if not highlights:
+            # Пробуем загрузить из файла
+            analysis_path = os.path.join(RESULTS_DIR, f"{video_id}_analysis.json")
+            if os.path.exists(analysis_path):
+                with open(analysis_path, 'r', encoding='utf-8') as f:
+                    analysis = json.load(f)
+                highlights = analysis.get("highlights", [])
+        
+        if not highlights:
+            raise HTTPException(status_code=404, detail="No highlights found")
+        
+        logger.info(f"📊 Найдено {len(highlights)} highlights для генерации")
+        
+        # Генерируем все клипы
+        generated_clips = []
+        transcript_segments = task_result.get("transcript", [])
+        
+        for i, highlight in enumerate(highlights):
+            try:
+                start_time = highlight["start_time"]
+                end_time = highlight["end_time"]
+                
+                # Генерируем уникальный ID для клипа
+                clip_id = str(uuid.uuid4())
+                clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
+                
+                logger.info(f"🎬 Генерируем клип #{i + 1}/{len(highlights)}: {start_time}s - {end_time}s")
+                
+                # Фильтруем сегменты для данного временного отрезка
+                clip_segments = []
+                for segment in transcript_segments:
+                    seg_start = segment.get("start", 0)
+                    seg_end = segment.get("end", 0)
+                    
+                    if seg_end > start_time and seg_start < end_time:
+                        adjusted_segment = {
+                            "start": max(0, seg_start - start_time),
+                            "end": min(end_time - start_time, seg_end - start_time),
+                            "text": segment.get("text", "")
+                        }
+                        clip_segments.append(adjusted_segment)
+                
+                # Создаем субтитры
+                subtitle_filter = ""
+                if clip_segments:
+                    subtitle_filter = create_subtitle_filter(clip_segments, style_id)
+                
+                # Создаем фильтр обрезки
+                crop_filter = ""
+                if format_id == "9:16":
+                    crop_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+                elif format_id == "16:9":
+                    crop_filter = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+                elif format_id == "1:1":
+                    crop_filter = "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"
+                
+                # Объединяем фильтры
+                video_filter = ""
+                if crop_filter and subtitle_filter:
+                    video_filter = f"{crop_filter},{subtitle_filter}"
+                elif crop_filter:
+                    video_filter = crop_filter
+                elif subtitle_filter:
+                    video_filter = subtitle_filter
+                
+                # Команда FFmpeg
+                cmd = [
+                    'ffmpeg', '-i', video_path,
+                    '-ss', str(start_time),
+                    '-to', str(end_time),
+                    '-c:v', 'libx264', '-c:a', 'aac',
+                    '-strict', 'experimental',
+                    '-b:a', '128k'
+                ]
+                
+                if video_filter:
+                    cmd.extend(['-vf', video_filter])
+                
+                cmd.extend(['-y', clip_path])
+                
+                # Запускаем FFmpeg
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if os.path.exists(clip_path):
+                    # Загружаем в Supabase
+                    clip_url = upload_clip_to_supabase(clip_path, f"{clip_id}.mp4")
+                    
+                    clip_info = {
+                        "clip_id": clip_id,
+                        "highlight_index": i,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration": end_time - start_time,
+                        "title": highlight.get("title", f"Клип {i + 1}"),
+                        "description": highlight.get("description", ""),
+                        "url": clip_url
+                    }
+                    
+                    generated_clips.append(clip_info)
+                    logger.info(f"✅ Клип #{i + 1} сгенерирован: {clip_id}")
+                else:
+                    logger.error(f"❌ Ошибка генерации клипа #{i + 1}: {result.stderr}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка генерации клипа #{i + 1}: {e}")
+                continue
+        
+        if not generated_clips:
+            raise HTTPException(status_code=500, detail="Failed to generate any clips")
+        
+        logger.info(f"✅ Успешно сгенерировано {len(generated_clips)} из {len(highlights)} клипов")
+        
+        return {
+            "video_id": video_id,
+            "format_id": format_id,
+            "style_id": style_id,
+            "total_highlights": len(highlights),
+            "generated_clips": len(generated_clips),
+            "clips": generated_clips
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации всех клипов: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/clips/download/{clip_id}")
 async def download_clip(clip_id: str):
     """Скачивание клипа"""
@@ -1005,10 +1170,33 @@ def create_subtitle_filter(segments, style='modern'):
     
     current_style = styles.get(style, styles['modern'])
     
-    # Создаем drawtext фильтры для каждого сегмента
+    # Объединяем пересекающиеся сегменты чтобы избежать наложений
+    merged_segments = []
+    for segment in sorted(segments, key=lambda x: x['start']):
+        text = segment['text'].strip()
+        if not text:
+            continue
+            
+        start_time = segment['start']
+        end_time = segment['end']
+        
+        # Проверяем пересечение с последним сегментом
+        if merged_segments and start_time < merged_segments[-1]['end']:
+            # Объединяем с предыдущим сегментом
+            merged_segments[-1]['text'] += ' ' + text
+            merged_segments[-1]['end'] = max(merged_segments[-1]['end'], end_time)
+        else:
+            # Добавляем новый сегмент
+            merged_segments.append({
+                'start': start_time,
+                'end': end_time,
+                'text': text
+            })
+    
+    # Создаем drawtext фильтры для каждого объединенного сегмента
     drawtext_filters = []
     
-    for i, segment in enumerate(segments):
+    for i, segment in enumerate(merged_segments):
         start_time = segment['start']
         end_time = segment['end']
         text = segment['text'].strip()
@@ -1017,7 +1205,11 @@ def create_subtitle_filter(segments, style='modern'):
             continue
         
         # Экранируем специальные символы для FFmpeg
-        text = text.replace("'", "\\'").replace(":", "\\:")
+        text = text.replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
+        
+        # Ограничиваем длину текста для лучшего отображения
+        if len(text) > 80:
+            text = text[:77] + "..."
         
         # Создаем drawtext фильтр с караоке-эффектом
         drawtext = f"drawtext=text='{text}':fontsize={current_style['fontsize']}:fontcolor={current_style['fontcolor']}:bordercolor={current_style['bordercolor']}:borderw={current_style['borderw']}:shadowcolor={current_style['shadowcolor']}:shadowx={current_style['shadowx']}:shadowy={current_style['shadowy']}:x=(w-text_w)/2:y=h-text_h-50:enable='between(t,{start_time},{end_time})'"
