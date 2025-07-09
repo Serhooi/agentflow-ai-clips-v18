@@ -16,6 +16,9 @@ import subprocess
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 
+# Импорт модуля субтитров на основе ShortGPT
+from shortgpt_captions import create_word_level_subtitles, create_simple_subtitle_filter
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -953,38 +956,43 @@ async def generate_clip(request: ClipGenerationRequest):
         # Путь для сохранения
         clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
         
-        # Получаем транскрипт для субтитров
+        # Получаем транскрипт для субтитров (используем подход ShortGPT)
         transcript_data = task_result.get("transcript", {})
-        transcript_segments = transcript_data.get("segments", [])
         
-        # Фильтруем сегменты для данного временного отрезка
-        clip_segments = []
-        for segment in transcript_segments:
-            # Проверяем что segment является словарем
-            if not isinstance(segment, dict):
-                logger.warning(f"⚠️ Пропускаем некорректный segment: {type(segment)} - {segment}")
-                continue
-                
-            seg_start = segment.get("start", 0)
-            seg_end = segment.get("end", 0)
+        # Создаем субтитры с word-level таймингами как в ShortGPT
+        if transcript_data and transcript_data.get("segments"):
+            logger.info("📝 Создаем субтитры с word-level таймингами (ShortGPT подход)")
+            clip_subtitles = create_word_level_subtitles(transcript_data, max_caption_size=15)
             
-            # Проверяем пересечение с клипом
-            if seg_end > start_time and seg_start < end_time:
-                # Корректируем время относительно начала клипа
-                adjusted_segment = {
-                    "start": max(0, seg_start - start_time),
-                    "end": min(end_time - start_time, seg_end - start_time),
-                    "text": segment.get("text", "")
-                }
-                clip_segments.append(adjusted_segment)
+            # Фильтруем субтитры для текущего клипа
+            clip_segments = []
+            for subtitle in clip_subtitles:
+                sub_start = subtitle['start']
+                sub_end = subtitle['end']
+                
+                # Проверяем пересечение с клипом
+                if sub_end > start_time and sub_start < end_time:
+                    # Корректируем время относительно начала клипа
+                    adjusted_start = max(0, sub_start - start_time)
+                    adjusted_end = min(end_time - start_time, sub_end - start_time)
+                    
+                    if adjusted_end > adjusted_start:
+                        clip_segments.append({
+                            "start": adjusted_start,
+                            "end": adjusted_end,
+                            "text": subtitle['text']
+                        })
+            
+            logger.info(f"📝 Найдено {len(clip_segments)} субтитров для клипа")
+        else:
+            clip_segments = []
+            logger.warning("📝 Нет данных транскрипции для субтитров")
         
-        logger.info(f"📝 Найдено {len(clip_segments)} сегментов субтитров для клипа")
-        
-        # Создаем субтитры с караоке-эффектами
+        # Создаем простой фильтр субтитров (подход ShortGPT)
         subtitle_filter = ""
         if clip_segments:
-            subtitle_filter = create_subtitle_filter(clip_segments, style_id)
-            logger.info(f"✨ Создан фильтр субтитров: {len(subtitle_filter)} символов")
+            subtitle_filter = create_simple_subtitle_filter(clip_segments, style_id)
+            logger.info(f"✨ Создан простой фильтр субтитров: {len(subtitle_filter)} символов")
         
         # Создаем фильтр обрезки для формата 9:16
         crop_filter = ""
