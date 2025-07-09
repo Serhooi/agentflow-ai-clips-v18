@@ -872,7 +872,8 @@ async def generate_clip(request: ClipGenerationRequest):
         clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
         
         # Получаем транскрипт для субтитров
-        transcript_segments = task_result.get("transcript", [])
+        transcript_data = task_result.get("transcript", {})
+        transcript_segments = transcript_data.get("segments", [])
         
         # Фильтруем сегменты для данного временного отрезка
         clip_segments = []
@@ -1023,7 +1024,8 @@ async def generate_all_clips(request: ClipGenerationRequest):
         
         # Генерируем все клипы
         generated_clips = []
-        transcript_segments = task_result.get("transcript", [])
+        transcript_data = task_result.get("transcript", {})
+        transcript_segments = transcript_data.get("segments", [])
         
         for i, highlight in enumerate(highlights):
             try:
