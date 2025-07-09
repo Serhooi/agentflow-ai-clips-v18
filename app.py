@@ -1020,14 +1020,33 @@ async def generate_clip(request: ClipGenerationRequest):
         
         cmd.extend(['-y', clip_path])
         
-        logger.info(f"🎬 Команда FFmpeg: {' '.join(cmd[:10])}...")
+        logger.info(f"🎬 Полная команда FFmpeg: {' '.join(cmd)}")
+        logger.info(f"🎯 Video filter: {video_filter}")
+        logger.info(f"📏 Crop filter: {crop_filter}")
+        logger.info(f"📝 Subtitle filter: {subtitle_filter[:100]}..." if len(subtitle_filter) > 100 else f"📝 Subtitle filter: {subtitle_filter}")
         
-        # Запускаем FFmpeg
+        # Запускаем FFmpeg с проверкой ошибок
         result = subprocess.run(cmd, capture_output=True, text=True)
         
+        # Проверяем код возврата FFmpeg
+        if result.returncode != 0:
+            logger.error(f"❌ FFmpeg завершился с ошибкой (код {result.returncode})")
+            logger.error(f"❌ Stderr: {result.stderr}")
+            logger.error(f"❌ Stdout: {result.stdout}")
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr}")
+        
+        # Проверяем что файл создан и не пустой
         if not os.path.exists(clip_path):
-            logger.error(f"❌ Ошибка генерации клипа: {result.stderr}")
-            raise HTTPException(status_code=500, detail="Clip generation failed")
+            logger.error(f"❌ Файл клипа не создан: {clip_path}")
+            raise HTTPException(status_code=500, detail="Clip file not created")
+        
+        # Проверяем размер файла
+        file_size = os.path.getsize(clip_path)
+        if file_size < 1000:  # Меньше 1KB - подозрительно
+            logger.error(f"❌ Файл клипа слишком маленький: {file_size} байт")
+            raise HTTPException(status_code=500, detail="Generated clip is too small")
+        
+        logger.info(f"✅ Клип создан успешно: {file_size} байт")
         
         # Загружаем в Supabase если доступен
         clip_url = upload_clip_to_supabase(clip_path, f"{clip_id}.mp4")
@@ -1257,103 +1276,54 @@ async def download_clip(clip_id: str):
     )
 
 def create_subtitle_filter(segments, style='modern'):
-    """Создает FFmpeg фильтр для субтитров с караоке-эффектами"""
+    """Создает простой и надежный FFmpeg фильтр для субтитров"""
     if not segments:
+        logger.warning("📝 Нет сегментов для субтитров")
         return ""
     
-    # Стили субтитров
-    styles = {
-        'modern': {
-            'fontsize': 48,
-            'fontcolor': 'white',
-            'bordercolor': 'black',
-            'borderw': 3,
-            'shadowcolor': 'black@0.5',
-            'shadowx': 2,
-            'shadowy': 2
-        },
-        'neon': {
-            'fontsize': 52,
-            'fontcolor': 'cyan',
-            'bordercolor': 'magenta',
-            'borderw': 2,
-            'shadowcolor': 'black@0.8',
-            'shadowx': 3,
-            'shadowy': 3
-        },
-        'fire': {
-            'fontsize': 50,
-            'fontcolor': 'orange',
-            'bordercolor': 'red',
-            'borderw': 3,
-            'shadowcolor': 'black@0.6',
-            'shadowx': 2,
-            'shadowy': 2
-        },
-        'elegant': {
-            'fontsize': 46,
-            'fontcolor': 'gold',
-            'bordercolor': 'black',
-            'borderw': 2,
-            'shadowcolor': 'black@0.4',
-            'shadowx': 1,
-            'shadowy': 1
-        }
-    }
+    logger.info(f"📝 Создаем субтитры для {len(segments)} сегментов")
     
-    current_style = styles.get(style, styles['modern'])
+    # Простой стиль субтитров
+    fontsize = 48
+    fontcolor = 'white'
+    bordercolor = 'black'
+    borderw = 3
     
-    # Объединяем пересекающиеся сегменты чтобы избежать наложений
-    merged_segments = []
-    for segment in sorted(segments, key=lambda x: x['start']):
-        text = segment['text'].strip()
-        if not text:
-            continue
-            
-        start_time = segment['start']
-        end_time = segment['end']
-        
-        # Проверяем пересечение с последним сегментом
-        if merged_segments and start_time < merged_segments[-1]['end']:
-            # Объединяем с предыдущим сегментом
-            merged_segments[-1]['text'] += ' ' + text
-            merged_segments[-1]['end'] = max(merged_segments[-1]['end'], end_time)
-        else:
-            # Добавляем новый сегмент
-            merged_segments.append({
-                'start': start_time,
-                'end': end_time,
-                'text': text
-            })
-    
-    # Создаем drawtext фильтры для каждого объединенного сегмента
+    # Создаем простые drawtext фильтры
     drawtext_filters = []
     
-    for i, segment in enumerate(merged_segments):
-        start_time = segment['start']
-        end_time = segment['end']
-        text = segment['text'].strip()
+    for i, segment in enumerate(segments):
+        start_time = segment.get('start', 0)
+        end_time = segment.get('end', 0)
+        text = segment.get('text', '').strip()
+        
+        if not text or end_time <= start_time:
+            continue
+        
+        # Очищаем текст от проблемных символов
+        text = text.replace("'", "").replace(":", "").replace("%", "")
+        text = text.replace('"', '').replace('\\', '').replace('/', '')
+        
+        # Ограничиваем длину
+        if len(text) > 60:
+            text = text[:57] + "..."
         
         if not text:
             continue
         
-        # Экранируем специальные символы для FFmpeg
-        text = text.replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
-        
-        # Ограничиваем длину текста для лучшего отображения
-        if len(text) > 80:
-            text = text[:77] + "..."
-        
-        # Создаем drawtext фильтр с караоке-эффектом
-        drawtext = f"drawtext=text='{text}':fontsize={current_style['fontsize']}:fontcolor={current_style['fontcolor']}:bordercolor={current_style['bordercolor']}:borderw={current_style['borderw']}:shadowcolor={current_style['shadowcolor']}:shadowx={current_style['shadowx']}:shadowy={current_style['shadowy']}:x=(w-text_w)/2:y=h-text_h-50:enable='between(t,{start_time},{end_time})'"
+        # Простой drawtext фильтр
+        drawtext = f"drawtext=text='{text}':fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-80:enable='between(t,{start_time},{end_time})'"
         
         drawtext_filters.append(drawtext)
+        logger.info(f"📝 Сегмент {i+1}: '{text}' ({start_time:.1f}s - {end_time:.1f}s)")
     
     if not drawtext_filters:
+        logger.warning("📝 Не удалось создать ни одного фильтра субтитров")
         return ""
     
-    # Объединяем все фильтры
-    return ",".join(drawtext_filters)
+    result = ",".join(drawtext_filters)
+    logger.info(f"✅ Создан фильтр субтитров: {len(drawtext_filters)} сегментов, {len(result)} символов")
+    return result
 
 # Глобальная переменная для хранения последнего сгенерированного клипа
 last_generated_clip = None
