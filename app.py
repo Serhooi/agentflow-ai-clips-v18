@@ -444,6 +444,11 @@ async def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> O
             content = content[:-3]
         content = content.strip()
         
+        # Проверяем что контент не пустой
+        if not content:
+            logger.warning("ChatGPT вернул пустой ответ, используем fallback")
+            return create_fallback_highlights(video_duration, target_clips)
+        
         try:
             result = json.loads(content)
             highlights = result.get("highlights", [])
@@ -469,7 +474,7 @@ async def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> O
             
         except json.JSONDecodeError as e:
             logger.error(f"Ошибка парсинга JSON от ChatGPT: {e}")
-            logger.error(f"Содержимое ответа: {content}")
+            logger.error(f"Содержимое ответа: '{content}'")
             
             # Fallback - создаем равномерно распределенные клипы
             return create_fallback_highlights(video_duration, target_clips)
@@ -482,14 +487,20 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
     """Создание равномерно распределенных клипов при ошибке"""
     highlights = []
     
-    # Определяем длительность клипа и интервал между клипами
-    clip_duration = min(20.0, video_duration / target_clips)
-    interval = (video_duration - (clip_duration * target_clips)) / (target_clips + 1)
+    logger.info(f"🔄 Создаем {target_clips} fallback клипов для видео длительностью {video_duration}s")
+    
+    # Определяем длительность клипа (15-20 секунд оптимально)
+    clip_duration = min(20.0, max(15.0, video_duration / target_clips))
     
     # Создаем равномерно распределенные клипы
     for i in range(target_clips):
-        start_time = interval * (i + 1) + clip_duration * i
-        end_time = start_time + clip_duration
+        # Распределяем клипы равномерно по видео
+        start_time = (video_duration / target_clips) * i
+        end_time = min(start_time + clip_duration, video_duration)
+        
+        # Убеждаемся что клип не слишком короткий
+        if end_time - start_time < 10:
+            end_time = min(start_time + 10, video_duration)
         
         highlights.append({
             "start_time": start_time,
@@ -499,6 +510,7 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
             "keywords": []
         })
     
+    logger.info(f"✅ Создано {len(highlights)} fallback клипов")
     return {"highlights": highlights}
 
 async def process_video(video_id: str) -> dict:
