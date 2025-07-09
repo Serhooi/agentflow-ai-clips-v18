@@ -13,7 +13,7 @@ import time
 import logging
 import asyncio
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 
 # Настройка логирования
@@ -92,6 +92,11 @@ processing_semaphore = asyncio.Semaphore(1)  # Ограничиваем до 1 �
 task_queue = {}  # Очередь задач
 task_status = {}  # Статусы задач
 
+# Настройки очистки памяти
+MAX_TASK_AGE = 2 * 60 * 60  # 2 часа (меньше чем в master для экономии памяти)
+CLEANUP_INTERVAL = 30 * 60   # Очистка каждые 30 минут
+MAX_TASKS_IN_MEMORY = 50     # Максимум задач в памяти
+
 def init_supabase():
     """Инициализация Supabase клиентов"""
     global supabase, service_supabase
@@ -152,6 +157,57 @@ async def startup_event():
     logger.info("🎬 Whisper.cpp + очередь задач активированы")
     logger.info("🔥 Оптимизировано для Render.com")
     logger.info("⚡ Стабильная обработка видео")
+
+def cleanup_old_tasks():
+    """Очистка старых задач из памяти"""
+    global task_status
+    
+    current_time = time.time()
+    tasks_to_remove = []
+    
+    for video_id, task_data in task_status.items():
+        # Получаем время создания задачи
+        task_time = task_data.get("created_at", current_time)
+        if isinstance(task_time, str):
+            try:
+                task_time = datetime.fromisoformat(task_time.replace('Z', '+00:00')).timestamp()
+            except:
+                task_time = current_time
+        
+        # Удаляем старые задачи
+        if current_time - task_time > MAX_TASK_AGE:
+            tasks_to_remove.append(video_id)
+    
+    # Если слишком много задач, удаляем самые старые
+    if len(task_status) > MAX_TASKS_IN_MEMORY:
+        sorted_tasks = sorted(task_status.items(), 
+                            key=lambda x: x[1].get("created_at", 0))
+        excess_count = len(task_status) - MAX_TASKS_IN_MEMORY
+        for i in range(excess_count):
+            tasks_to_remove.append(sorted_tasks[i][0])
+    
+    # Удаляем задачи
+    removed_count = 0
+    for video_id in tasks_to_remove:
+        if video_id in task_status:
+            del task_status[video_id]
+            removed_count += 1
+    
+    if removed_count > 0:
+        logger.info(f"🧹 Очищено {removed_count} старых задач из памяти")
+        logger.info(f"📊 Задач в памяти: {len(task_status)}")
+
+async def periodic_cleanup():
+    """Периодическая очистка памяти"""
+    while True:
+        try:
+            await asyncio.sleep(CLEANUP_INTERVAL)
+            cleanup_old_tasks()
+        except Exception as e:
+            logger.error(f"❌ Ошибка периодической очистки: {e}")
+
+# Запуск периодической очистки
+asyncio.create_task(periodic_cleanup())
 
 # Pydantic модели
 class VideoAnalysisRequest(BaseModel):
@@ -509,11 +565,15 @@ async def process_video(video_id: str) -> dict:
 
 async def process_video_task(video_id: str):
     """Задача обработки видео для очереди"""
+    # Сохраняем время создания
+    created_at = task_status.get(video_id, {}).get("created_at", time.time())
+    
     # Обновляем статус
     task_status[video_id] = {
         "status": "processing",
         "progress": 10,
-        "message": "Начало обработки видео"
+        "message": "Начало обработки видео",
+        "created_at": created_at
     }
     
     try:
@@ -525,7 +585,8 @@ async def process_video_task(video_id: str):
             task_status[video_id] = {
                 "status": "processing",
                 "progress": 20,
-                "message": "Извлечение аудио из видео..."
+                "message": "Извлечение аудио из видео...",
+                "created_at": created_at
             }
             
             # Обрабатываем видео
@@ -536,7 +597,8 @@ async def process_video_task(video_id: str):
                 task_status[video_id] = {
                     "status": "error",
                     "progress": 100,
-                    "message": f"Ошибка: {result['error']}"
+                    "message": f"Ошибка: {result['error']}",
+                    "created_at": created_at
                 }
                 logger.error(f"❌ Ошибка обработки видео {video_id}: {result['error']}")
             else:
@@ -545,7 +607,8 @@ async def process_video_task(video_id: str):
                     "status": "completed",
                     "progress": 100,
                     "message": "Обработка завершена успешно",
-                    "result": result
+                    "result": result,
+                    "created_at": created_at
                 }
                 logger.info(f"✅ Обработка видео {video_id} завершена успешно")
     
@@ -554,7 +617,8 @@ async def process_video_task(video_id: str):
         task_status[video_id] = {
             "status": "error",
             "progress": 100,
-            "message": f"Ошибка: {str(e)}"
+            "message": f"Ошибка: {str(e)}",
+            "created_at": created_at
         }
         logger.error(f"❌ Ошибка в задаче обработки видео {video_id}: {e}")
 
@@ -617,7 +681,8 @@ async def analyze_video(request: VideoAnalysisRequest, background_tasks: Backgro
     task_status[video_id] = {
         "status": "queued",
         "progress": 0,
-        "message": "В очереди на обработку"
+        "message": "В очереди на обработку",
+        "created_at": time.time()
     }
     
     # Запускаем задачу в фоне
@@ -652,6 +717,7 @@ async def get_video_status(video_id: str):
                 "status": "completed",
                 "progress": 100,
                 "message": "Обработка завершена успешно",
+                "created_at": time.time(),
                 "result": {
                     "transcript": transcript,
                     "highlights": analysis.get("highlights", [])
