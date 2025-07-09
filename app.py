@@ -877,6 +877,11 @@ async def generate_clip(request: ClipGenerationRequest):
         # Фильтруем сегменты для данного временного отрезка
         clip_segments = []
         for segment in transcript_segments:
+            # Проверяем что segment является словарем
+            if not isinstance(segment, dict):
+                logger.warning(f"⚠️ Пропускаем некорректный segment: {type(segment)} - {segment}")
+                continue
+                
             seg_start = segment.get("start", 0)
             seg_end = segment.get("end", 0)
             
@@ -1053,6 +1058,11 @@ async def generate_all_clips(request: ClipGenerationRequest):
                 # Фильтруем сегменты для данного временного отрезка
                 clip_segments = []
                 for segment in transcript_segments:
+                    # Проверяем что segment является словарем
+                    if not isinstance(segment, dict):
+                        logger.warning(f"⚠️ Пропускаем некорректный segment: {type(segment)} - {segment}")
+                        continue
+                        
                     seg_start = segment.get("start", 0)
                     seg_end = segment.get("end", 0)
                     
