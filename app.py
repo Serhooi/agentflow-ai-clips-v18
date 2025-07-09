@@ -953,8 +953,8 @@ async def generate_clip(request: ClipGenerationRequest):
             "start_time": start_time,
             "end_time": end_time,
             "duration": end_time - start_time,
-            "title": highlight.get("title", "Клип"),
-            "description": highlight.get("description", ""),
+            "title": highlight.get("title", "Клип") if isinstance(highlight, dict) else "Клип",
+            "description": highlight.get("description", "") if isinstance(highlight, dict) else "",
             "url": clip_url
         }
         
@@ -1115,8 +1115,8 @@ async def generate_all_clips(request: ClipGenerationRequest):
                         "start_time": start_time,
                         "end_time": end_time,
                         "duration": end_time - start_time,
-                        "title": highlight.get("title", f"Клип {i + 1}"),
-                        "description": highlight.get("description", ""),
+                        "title": highlight.get("title", f"Клип {i + 1}") if isinstance(highlight, dict) else f"Клип {i + 1}",
+                        "description": highlight.get("description", "") if isinstance(highlight, dict) else "",
                         "url": clip_url
                     }
                     
