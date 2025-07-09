@@ -153,6 +153,10 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки Whisper.cpp модели: {e}")
     
+    # Запускаем периодическую очистку памяти
+    asyncio.create_task(periodic_cleanup())
+    logger.info("🧹 Система очистки памяти запущена")
+    
     logger.info("🚀 AgentFlow AI Clips v21.0.0 started!")
     logger.info("🎬 Whisper.cpp + очередь задач активированы")
     logger.info("🔥 Оптимизировано для Render.com")
@@ -206,8 +210,8 @@ async def periodic_cleanup():
         except Exception as e:
             logger.error(f"❌ Ошибка периодической очистки: {e}")
 
-# Запуск периодической очистки
-asyncio.create_task(periodic_cleanup())
+# Запуск периодической очистки будет в startup event
+# asyncio.create_task(periodic_cleanup())
 
 # Pydantic модели
 class VideoAnalysisRequest(BaseModel):
