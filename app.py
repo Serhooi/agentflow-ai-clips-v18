@@ -840,8 +840,28 @@ async def generate_clip(request: ClipGenerationRequest):
             highlight_index = len(highlights) - 1
         
         highlight = highlights[highlight_index]
+        
+        # Проверяем что highlight это словарь, а не строка
+        if isinstance(highlight, str):
+            logger.error(f"❌ Highlight является строкой, а не объектом: {highlight}")
+            raise HTTPException(status_code=500, detail="Invalid highlight format")
+        
+        if not isinstance(highlight, dict):
+            logger.error(f"❌ Highlight не является словарем: {type(highlight)}")
+            raise HTTPException(status_code=500, detail="Invalid highlight format")
+        
+        # Проверяем наличие обязательных полей
+        if "start_time" not in highlight or "end_time" not in highlight:
+            logger.error(f"❌ Highlight не содержит start_time или end_time: {highlight}")
+            raise HTTPException(status_code=500, detail="Missing time fields in highlight")
+        
         start_time = highlight["start_time"]
         end_time = highlight["end_time"]
+        
+        # Проверяем что времена являются числами
+        if not isinstance(start_time, (int, float)) or not isinstance(end_time, (int, float)):
+            logger.error(f"❌ Некорректные времена в highlight: start={start_time}, end={end_time}")
+            raise HTTPException(status_code=500, detail="Invalid time values in highlight")
         
         logger.info(f"🎬 Генерируем клип #{highlight_index + 1} из {len(highlights)}: {start_time}s - {end_time}s")
         
@@ -1002,8 +1022,27 @@ async def generate_all_clips(request: ClipGenerationRequest):
         
         for i, highlight in enumerate(highlights):
             try:
+                # Проверяем что highlight это словарь, а не строка
+                if isinstance(highlight, str):
+                    logger.error(f"❌ Highlight #{i + 1} является строкой, а не объектом: {highlight}")
+                    continue
+                
+                if not isinstance(highlight, dict):
+                    logger.error(f"❌ Highlight #{i + 1} не является словарем: {type(highlight)}")
+                    continue
+                
+                # Проверяем наличие обязательных полей
+                if "start_time" not in highlight or "end_time" not in highlight:
+                    logger.error(f"❌ Highlight #{i + 1} не содержит start_time или end_time: {highlight}")
+                    continue
+                
                 start_time = highlight["start_time"]
                 end_time = highlight["end_time"]
+                
+                # Проверяем что времена являются числами
+                if not isinstance(start_time, (int, float)) or not isinstance(end_time, (int, float)):
+                    logger.error(f"❌ Некорректные времена в highlight #{i + 1}: start={start_time}, end={end_time}")
+                    continue
                 
                 # Генерируем уникальный ID для клипа
                 clip_id = str(uuid.uuid4())
