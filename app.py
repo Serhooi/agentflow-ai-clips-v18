@@ -1236,29 +1236,7 @@ async def generate_clips_task(task_id: str):
                 
                 logger.info(f"📝 Найдено {len(words_in_range)} слов для субтитров")
                 
-                # Создание ASS файла
-                style_config = Config.ASS_STYLES.get(style_id, Config.ASS_STYLES["modern"])
-                ass_filename = f"{task_id}_clip_{i+1}.ass"
-                ass_path = os.path.join(Config.ASS_DIR, ass_filename)
-                
-                if words_in_range:
-                    create_ass_subtitle_file(words_in_range, style_config, ass_path)
-                else:
-                    # Создаем пустой ASS файл если нет слов
-                    with open(ass_path, 'w', encoding='utf-8') as f:
-                        f.write("""[Script Info]
-Title: Empty Subtitles
-ScriptType: v4.00+
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,16,&Hffffff,&H00ff00,&H000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,10,10,60,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""")
-                
-                # Создание клипа
+                # Создание клипа (субтитры создаются внутри функции)
                 clip_filename = f"{task_id}_clip_{i+1}_{format_id.replace(':', 'x')}.mp4"
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
                 
