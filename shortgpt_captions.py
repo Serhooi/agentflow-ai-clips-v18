@@ -82,43 +82,47 @@ def create_simple_subtitle_filter(segments, style='modern'):
     
     logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов, стиль: {style}")
     
-    # Определяем стили субтитров - белый цвет, подходящий размер для 9:16
+    # Определяем стили субтитров - белый текст, черная обводка, разные цвета хайлайтов
     styles = {
         'modern': {
-            'fontsize': 48,  # Уменьшил для 9:16 формата
-            'fontcolor': 'white',  # Всегда белый как требуется
-            'bordercolor': 'black',  # Черная обводка для контраста
+            'fontsize': 48,
+            'fontcolor': 'white',
+            'bordercolor': 'black',
             'borderw': 3,
             'shadowcolor': 'black@0.5',
             'shadowx': 2,
-            'shadowy': 2
+            'shadowy': 2,
+            'highlight_color': '#4A90E2'  # Синий хайлайт
         },
         'neon': {
             'fontsize': 48,
-            'fontcolor': 'white',  # Белый текст
-            'bordercolor': '#00FFFF',  # Неоновая обводка
+            'fontcolor': 'white',
+            'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': '#00FFFF@0.8',
-            'shadowx': 0,
-            'shadowy': 0
+            'shadowcolor': 'black@0.5',
+            'shadowx': 2,
+            'shadowy': 2,
+            'highlight_color': '#00FFFF'  # Бирюзовый хайлайт
         },
         'fire': {
             'fontsize': 48,
-            'fontcolor': 'white',  # Белый текст
-            'bordercolor': '#FF0000',  # Огненная обводка
+            'fontcolor': 'white',
+            'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': '#FF4500@0.7',
-            'shadowx': 3,
-            'shadowy': 3
+            'shadowcolor': 'black@0.5',
+            'shadowx': 2,
+            'shadowy': 2,
+            'highlight_color': '#FF6B35'  # Оранжевый хайлайт
         },
         'elegant': {
             'fontsize': 48,
-            'fontcolor': 'white',  # Белый текст
-            'bordercolor': '#2C2C2C',  # Элегантная обводка
-            'borderw': 2,
-            'shadowcolor': '#000000@0.6',
-            'shadowx': 1,
-            'shadowy': 1
+            'fontcolor': 'white',
+            'bordercolor': 'black',
+            'borderw': 3,
+            'shadowcolor': 'black@0.5',
+            'shadowx': 2,
+            'shadowy': 2,
+            'highlight_color': '#C0C0C0'  # Серебристый хайлайт
         }
     }
     
@@ -131,6 +135,7 @@ def create_simple_subtitle_filter(segments, style='modern'):
     shadowcolor = style_params['shadowcolor']
     shadowx = style_params['shadowx']
     shadowy = style_params['shadowy']
+    highlight_color = style_params['highlight_color']
     
     # Создаем простые drawtext фильтры
     drawtext_filters = []
