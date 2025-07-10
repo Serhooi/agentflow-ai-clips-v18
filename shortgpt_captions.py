@@ -99,18 +99,19 @@ def create_simple_subtitle_filter(segments, style='modern'):
         if not text or end_time <= start_time:
             continue
         
-        # Очищаем текст (как в ShortGPT)
-        text = re.sub(r'[^\w\s\-_"\'\']', '', text)
+        # Очищаем текст более агрессивно для FFmpeg
+        text = re.sub(r"[^\w\s]", "", text)  # Только буквы, цифры и пробелы
+        text = text.strip()
         
         # Ограничиваем длину
-        if len(text) > 50:
-            text = text[:47] + "..."
+        if len(text) > 30:
+            text = text[:27] + "..."
         
         if not text:
             continue
         
-        # Простой drawtext фильтр (стиль ShortGPT)
-        drawtext = f"drawtext=text='{text}':fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable='between(t,{start_time},{end_time})'"
+        # Простой drawtext фильтр без сложных символов
+        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
         
         drawtext_filters.append(drawtext)
         logger.info(f"📝 Субтитр {i+1}: '{text}' ({start_time:.1f}s - {end_time:.1f}s)")
