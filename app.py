@@ -726,7 +726,7 @@ def create_clip_with_ass_subtitles(
                 # Добавляем только если есть пересечение
                 if word_end > word_start:
                     clip_words.append({
-                        'word': word_data['word'],
+                        'text': word_data['word'],  # Изменил 'word' на 'text' для совместимости с ShortGPT
                         'start': word_start,
                         'end': word_end
                     })
