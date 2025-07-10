@@ -82,40 +82,40 @@ def create_simple_subtitle_filter(segments, style='modern'):
     
     logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов, стиль: {style}")
     
-    # Определяем стили субтитров на основе ShortGPT конфигураций
+    # Определяем стили субтитров - белый цвет, подходящий размер для 9:16
     styles = {
         'modern': {
-            'fontsize': 100,  # Как в ShortGPT
-            'fontcolor': '#4A90E2',  # Синий
-            'bordercolor': '#FFFFFF',  # Белая обводка
-            'borderw': 3,  # Как в ShortGPT stroke_width
-            'shadowcolor': '#000000@0.5',
+            'fontsize': 48,  # Уменьшил для 9:16 формата
+            'fontcolor': 'white',  # Всегда белый как требуется
+            'bordercolor': 'black',  # Черная обводка для контраста
+            'borderw': 3,
+            'shadowcolor': 'black@0.5',
             'shadowx': 2,
             'shadowy': 2
         },
         'neon': {
-            'fontsize': 100,
-            'fontcolor': '#00FFFF',  # Бирюзовый неон
-            'bordercolor': '#00FF00',  # Зеленая обводка
+            'fontsize': 48,
+            'fontcolor': 'white',  # Белый текст
+            'bordercolor': '#00FFFF',  # Неоновая обводка
             'borderw': 3,
-            'shadowcolor': '#00FFFF@0.8',  # Неоновое свечение
+            'shadowcolor': '#00FFFF@0.8',
             'shadowx': 0,
             'shadowy': 0
         },
         'fire': {
-            'fontsize': 100,
-            'fontcolor': '#FF6B35',  # Оранжевый огонь
-            'bordercolor': '#FF0000',  # Красная обводка
+            'fontsize': 48,
+            'fontcolor': 'white',  # Белый текст
+            'bordercolor': '#FF0000',  # Огненная обводка
             'borderw': 3,
-            'shadowcolor': '#FF4500@0.7',  # Огненное свечение
+            'shadowcolor': '#FF4500@0.7',
             'shadowx': 3,
             'shadowy': 3
         },
         'elegant': {
-            'fontsize': 100,
-            'fontcolor': '#F5F5F5',  # Элегантный светло-серый
-            'bordercolor': '#2C2C2C',  # Темно-серая обводка
-            'borderw': 2,  # Тоньше для элегантности
+            'fontsize': 48,
+            'fontcolor': 'white',  # Белый текст
+            'bordercolor': '#2C2C2C',  # Элегантная обводка
+            'borderw': 2,
             'shadowcolor': '#000000@0.6',
             'shadowx': 1,
             'shadowy': 1

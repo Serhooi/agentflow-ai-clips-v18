@@ -711,13 +711,14 @@ def create_clip_with_ass_subtitles(
             logger.error(f"❌ Неподдерживаемый формат: {format_type}")
             return False
         
-        # Фильтруем слова для данного временного отрезка
+        # Фильтруем слова для данного временного отрезка (любое пересечение)
         clip_words = []
         for word_data in words_data:
-            # Проверяем что слово попадает в временной интервал клипа
-            if (word_data['start'] >= start_time and word_data['start'] < end_time) or \
-               (word_data['end'] > start_time and word_data['end'] <= end_time) or \
-               (word_data['start'] < start_time and word_data['end'] > end_time):
+            word_start = word_data['start']
+            word_end = word_data['end']
+            
+            # Проверяем пересечение с интервалом клипа (упрощенная логика)
+            if word_end > start_time and word_start < end_time:
                 
                 # Корректируем время относительно начала клипа
                 word_start = max(0, word_data['start'] - start_time)
