@@ -15,6 +15,9 @@ from pathlib import Path
 import psutil
 import time
 
+# Импорт модуля субтитров на основе ShortGPT
+from shortgpt_captions import create_word_level_subtitles, create_simple_subtitle_filter
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -752,44 +755,57 @@ def create_clip_with_ass_subtitles(
         
         logger.info("✅ ЭТАП 1 завершен: базовое видео создано")
         
-        # ЭТАП 2: Накладываем ASS субтитры
+        # ЭТАП 2: Накладываем простые субтитры (подход ShortGPT)
         if clip_words:
             try:
-                # Создаем ASS файл
-                ass_path = ass_subtitle_system.generate_ass_file(
-                    clip_words, 
-                    style, 
-                    end_time - start_time
-                )
+                logger.info("📝 ЭТАП 2: Создаем простые субтитры (ShortGPT подход)...")
                 
-                # Применяем ASS субтитры
-                subtitle_cmd = [
-                    'ffmpeg', '-i', temp_video_path,
-                    '-vf', f'ass={ass_path}',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'copy',
-                    '-y', output_path
-                ]
+                # Конвертируем clip_words в формат для ShortGPT
+                subtitle_segments = []
+                for word in clip_words:
+                    subtitle_segments.append({
+                        'start': word['start'],
+                        'end': word['end'], 
+                        'text': word['word']
+                    })
                 
-                logger.info("📝 ЭТАП 2: Накладываем ASS субтитры...")
-                result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
+                # Создаем простой фильтр субтитров
+                subtitle_filter = create_simple_subtitle_filter(subtitle_segments, style)
                 
-                if result.returncode == 0:
-                    logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
+                if subtitle_filter:
+                    # Применяем простые drawtext субтитры
+                    subtitle_cmd = [
+                        'ffmpeg', '-i', temp_video_path,
+                        '-vf', subtitle_filter,
+                        '-c:v', 'libx264', '-preset', 'fast',
+                        '-c:a', 'copy',
+                        '-y', output_path
+                    ]
                     
-                    # Удаляем временные файлы
-                    if os.path.exists(temp_video_path):
-                        os.remove(temp_video_path)
-                    if os.path.exists(ass_path):
-                        os.remove(ass_path)
+                    logger.info("📝 Применяем простые drawtext субтитры...")
+                    result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
                     
-                    return True
+                    if result.returncode == 0:
+                        logger.info("✅ ЭТАП 2 завершен: простые субтитры наложены")
+                        
+                        # Удаляем временный файл
+                        if os.path.exists(temp_video_path):
+                            os.remove(temp_video_path)
+                        
+                        return True
+                    else:
+                        logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
+                        # Fallback: используем видео без субтитров
+                        if os.path.exists(temp_video_path):
+                            os.rename(temp_video_path, output_path)
+                        logger.info("🔄 Fallback: сохранен клип без субтитров")
+                        return True
                 else:
-                    logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
-                    # Fallback: используем видео без субтитров
+                    logger.warning("⚠️ Не удалось создать фильтр субтитров")
+                    # Используем видео без субтитров
                     if os.path.exists(temp_video_path):
                         os.rename(temp_video_path, output_path)
-                    logger.info("🔄 Fallback: сохранен клип без субтитров")
+                    logger.info("✅ Клип создан без субтитров")
                     return True
                     
             except Exception as e:
