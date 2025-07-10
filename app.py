@@ -760,14 +760,18 @@ def create_clip_with_ass_subtitles(
             try:
                 logger.info("📝 ЭТАП 2: Создаем простые субтитры (ShortGPT подход)...")
                 
-                # Конвертируем clip_words в формат для ShortGPT
-                subtitle_segments = []
-                for word in clip_words:
-                    subtitle_segments.append({
-                        'start': word['start'],
-                        'end': word['end'], 
-                        'text': word['word']
-                    })
+                # Создаем transcript_data в правильном формате для getCaptionsWithTime
+                transcript_data = {
+                    'segments': [{
+                        'words': clip_words
+                    }]
+                }
+                
+                # Используем функцию группировки из ShortGPT для создания субтитров по 3-5 слов
+                from shortgpt_captions import create_word_level_subtitles
+                subtitle_segments = create_word_level_subtitles(transcript_data, max_caption_size=25)
+                
+                logger.info(f"📝 Создано {len(subtitle_segments)} групп субтитров (вместо {len(clip_words)} отдельных слов)")
                 
                 # Создаем простой фильтр субтитров
                 subtitle_filter = create_simple_subtitle_filter(subtitle_segments, style)

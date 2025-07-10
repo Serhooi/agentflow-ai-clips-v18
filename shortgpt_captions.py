@@ -74,19 +74,63 @@ def getCaptionsWithTime(transcriptions, maxCaptionSize=15, considerPunctuation=T
 def create_simple_subtitle_filter(segments, style='modern'):
     """
     Создает простой FFmpeg фильтр для субтитров на основе подхода ShortGPT
-    Без сложных караоке-эффектов, просто надежные субтитры
+    Поддерживает 4 стиля: Modern, Neon, Fire, Elegant
     """
     if not segments:
         logger.warning("📝 Нет сегментов для субтитров")
         return ""
     
-    logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов")
+    logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов, стиль: {style}")
     
-    # Простой стиль как в ShortGPT
-    fontsize = 24
-    fontcolor = 'white'
-    bordercolor = 'black'
-    borderw = 2
+    # Определяем стили субтитров на основе ShortGPT конфигураций
+    styles = {
+        'modern': {
+            'fontsize': 100,  # Как в ShortGPT
+            'fontcolor': '#4A90E2',  # Синий
+            'bordercolor': '#FFFFFF',  # Белая обводка
+            'borderw': 3,  # Как в ShortGPT stroke_width
+            'shadowcolor': '#000000@0.5',
+            'shadowx': 2,
+            'shadowy': 2
+        },
+        'neon': {
+            'fontsize': 100,
+            'fontcolor': '#00FFFF',  # Бирюзовый неон
+            'bordercolor': '#00FF00',  # Зеленая обводка
+            'borderw': 3,
+            'shadowcolor': '#00FFFF@0.8',  # Неоновое свечение
+            'shadowx': 0,
+            'shadowy': 0
+        },
+        'fire': {
+            'fontsize': 100,
+            'fontcolor': '#FF6B35',  # Оранжевый огонь
+            'bordercolor': '#FF0000',  # Красная обводка
+            'borderw': 3,
+            'shadowcolor': '#FF4500@0.7',  # Огненное свечение
+            'shadowx': 3,
+            'shadowy': 3
+        },
+        'elegant': {
+            'fontsize': 100,
+            'fontcolor': '#F5F5F5',  # Элегантный светло-серый
+            'bordercolor': '#2C2C2C',  # Темно-серая обводка
+            'borderw': 2,  # Тоньше для элегантности
+            'shadowcolor': '#000000@0.6',
+            'shadowx': 1,
+            'shadowy': 1
+        }
+    }
+    
+    # Получаем параметры стиля
+    style_params = styles.get(style.lower(), styles['modern'])
+    fontsize = style_params['fontsize']
+    fontcolor = style_params['fontcolor']
+    bordercolor = style_params['bordercolor']
+    borderw = style_params['borderw']
+    shadowcolor = style_params['shadowcolor']
+    shadowx = style_params['shadowx']
+    shadowy = style_params['shadowy']
     
     # Создаем простые drawtext фильтры
     drawtext_filters = []
@@ -110,8 +154,8 @@ def create_simple_subtitle_filter(segments, style='modern'):
         if not text:
             continue
         
-        # Простой drawtext фильтр без сложных символов
-        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
+        # Создаем drawtext фильтр с поддержкой стилей и теней
+        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:shadowcolor={shadowcolor}:shadowx={shadowx}:shadowy={shadowy}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
         
         drawtext_filters.append(drawtext)
         logger.info(f"📝 Субтитр {i+1}: '{text}' ({start_time:.1f}s - {end_time:.1f}s)")
