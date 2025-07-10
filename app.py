@@ -1263,7 +1263,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
                 
                 success = create_clip_with_ass_subtitles(
-                    video_path, start_time, end_time, format_id, ass_path, clip_path
+                    video_path, start_time, end_time, words_in_range, clip_path, format_id, style_id
                 )
                 
                 if success:
