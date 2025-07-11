@@ -82,16 +82,13 @@ def create_simple_subtitle_filter(segments, style='modern'):
     
     logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов, стиль: {style}")
     
-    # Определяем стили субтитров - белый текст, черная обводка, разные цвета хайлайтов
+    # Определяем стили субтитров - упрощенные для экономии памяти
     styles = {
         'modern': {
             'fontsize': 48,
             'fontcolor': 'white',
             'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': 'black@0.5',
-            'shadowx': 2,
-            'shadowy': 2,
             'highlight_color': '#4A90E2'  # Синий хайлайт
         },
         'neon': {
@@ -99,9 +96,6 @@ def create_simple_subtitle_filter(segments, style='modern'):
             'fontcolor': 'white',
             'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': 'black@0.5',
-            'shadowx': 2,
-            'shadowy': 2,
             'highlight_color': '#00FFFF'  # Бирюзовый хайлайт
         },
         'fire': {
@@ -109,9 +103,6 @@ def create_simple_subtitle_filter(segments, style='modern'):
             'fontcolor': 'white',
             'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': 'black@0.5',
-            'shadowx': 2,
-            'shadowy': 2,
             'highlight_color': '#FF6B35'  # Оранжевый хайлайт
         },
         'elegant': {
@@ -119,22 +110,16 @@ def create_simple_subtitle_filter(segments, style='modern'):
             'fontcolor': 'white',
             'bordercolor': 'black',
             'borderw': 3,
-            'shadowcolor': 'black@0.5',
-            'shadowx': 2,
-            'shadowy': 2,
             'highlight_color': '#C0C0C0'  # Серебристый хайлайт
         }
     }
     
-    # Получаем параметры стиля
+    # Получаем параметры стиля (упрощенные)
     style_params = styles.get(style.lower(), styles['modern'])
     fontsize = style_params['fontsize']
     fontcolor = style_params['fontcolor']
     bordercolor = style_params['bordercolor']
     borderw = style_params['borderw']
-    shadowcolor = style_params['shadowcolor']
-    shadowx = style_params['shadowx']
-    shadowy = style_params['shadowy']
     highlight_color = style_params['highlight_color']
     
     # Создаем простые drawtext фильтры
@@ -159,8 +144,8 @@ def create_simple_subtitle_filter(segments, style='modern'):
         if not text:
             continue
         
-        # Создаем drawtext фильтр с поддержкой стилей и теней
-        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:shadowcolor={shadowcolor}:shadowx={shadowx}:shadowy={shadowy}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
+        # Создаем простой drawtext фильтр без теней (экономия памяти на Render.com)
+        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
         
         drawtext_filters.append(drawtext)
         logger.info(f"📝 Субтитр {i+1}: '{text}' ({start_time:.1f}s - {end_time:.1f}s)")
