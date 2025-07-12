@@ -82,44 +82,49 @@ def create_simple_subtitle_filter(segments, style='modern'):
     
     logger.info(f"📝 Создаем простые субтитры для {len(segments)} сегментов, стиль: {style}")
     
-    # Определяем стили субтитров - упрощенные для экономии памяти
+    # Определяем стили субтитров - Montserrat Bold, тонкая обводка
     styles = {
         'modern': {
             'fontsize': 48,
             'fontcolor': 'white',
             'bordercolor': 'black',
-            'borderw': 3,
+            'borderw': 1,  # Уменьшил обводку
+            'fontfile': '/usr/share/fonts/truetype/dejavu/DejaVu-Sans-Bold.ttf',  # Жирный шрифт
             'highlight_color': '#4A90E2'  # Синий хайлайт
         },
         'neon': {
             'fontsize': 48,
             'fontcolor': 'white',
             'bordercolor': 'black',
-            'borderw': 3,
+            'borderw': 1,
+            'fontfile': '/usr/share/fonts/truetype/dejavu/DejaVu-Sans-Bold.ttf',
             'highlight_color': '#00FFFF'  # Бирюзовый хайлайт
         },
         'fire': {
             'fontsize': 48,
             'fontcolor': 'white',
             'bordercolor': 'black',
-            'borderw': 3,
+            'borderw': 1,
+            'fontfile': '/usr/share/fonts/truetype/dejavu/DejaVu-Sans-Bold.ttf',
             'highlight_color': '#FF6B35'  # Оранжевый хайлайт
         },
         'elegant': {
             'fontsize': 48,
             'fontcolor': 'white',
             'bordercolor': 'black',
-            'borderw': 3,
+            'borderw': 1,
+            'fontfile': '/usr/share/fonts/truetype/dejavu/DejaVu-Sans-Bold.ttf',
             'highlight_color': '#C0C0C0'  # Серебристый хайлайт
         }
     }
     
-    # Получаем параметры стиля (упрощенные)
+    # Получаем параметры стиля (с жирным шрифтом)
     style_params = styles.get(style.lower(), styles['modern'])
     fontsize = style_params['fontsize']
     fontcolor = style_params['fontcolor']
     bordercolor = style_params['bordercolor']
     borderw = style_params['borderw']
+    fontfile = style_params['fontfile']
     highlight_color = style_params['highlight_color']
     
     # Создаем простые drawtext фильтры
@@ -144,8 +149,8 @@ def create_simple_subtitle_filter(segments, style='modern'):
         if not text:
             continue
         
-        # Создаем простой drawtext фильтр без теней (экономия памяти на Render.com)
-        drawtext = f"drawtext=text={text}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
+        # Создаем простой drawtext фильтр с жирным шрифтом
+        drawtext = f"drawtext=text={text}:fontfile={fontfile}:fontsize={fontsize}:fontcolor={fontcolor}:bordercolor={bordercolor}:borderw={borderw}:x=(w-text_w)/2:y=h-text_h-60:enable=between(t\\,{start_time}\\,{end_time})"
         
         drawtext_filters.append(drawtext)
         logger.info(f"📝 Субтитр {i+1}: '{text}' ({start_time:.1f}s - {end_time:.1f}s)")
