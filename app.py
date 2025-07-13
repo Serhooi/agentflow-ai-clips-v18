@@ -713,6 +713,8 @@ def create_clip_with_ass_subtitles(
         
         # Фильтруем слова для данного временного отрезка (любое пересечение)
         clip_words = []
+        logger.info(f"🔍 Фильтруем слова для клипа {start_time}s-{end_time}s из {len(words_data)} общих слов")
+        
         for word_data in words_data:
             word_start = word_data['start']
             word_end = word_data['end']
@@ -721,16 +723,21 @@ def create_clip_with_ass_subtitles(
             if word_end > start_time and word_start < end_time:
                 
                 # Корректируем время относительно начала клипа
-                word_start = max(0, word_data['start'] - start_time)
-                word_end = min(end_time - start_time, word_data['end'] - start_time)
+                clip_word_start = max(0, word_data['start'] - start_time)
+                clip_word_end = min(end_time - start_time, word_data['end'] - start_time)
                 
                 # Добавляем только если есть пересечение
-                if word_end > word_start:
+                if clip_word_end > clip_word_start:
                     clip_words.append({
                         'text': word_data['word'],  # Изменил 'word' на 'text' для совместимости с ShortGPT
-                        'start': word_start,
-                        'end': word_end
+                        'start': clip_word_start,
+                        'end': clip_word_end
                     })
+                    logger.debug(f"✅ Слово '{word_data['word']}' добавлено: {clip_word_start:.1f}s-{clip_word_end:.1f}s")
+                else:
+                    logger.debug(f"❌ Слово '{word_data['word']}' отклонено: некорректное время {clip_word_start:.1f}s-{clip_word_end:.1f}s")
+            else:
+                logger.debug(f"⏭️ Слово '{word_data['word']}' пропущено: {word_start:.1f}s-{word_end:.1f}s не пересекается с {start_time}s-{end_time}s")
         
         logger.info(f"📝 Найдено {len(clip_words)} слов для субтитров")
         
