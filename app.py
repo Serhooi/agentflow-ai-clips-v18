@@ -1,5 +1,5 @@
 # AgentFlow AI Clips v18.3.0 - ВОССТАНОВЛЕННАЯ РАБОЧАЯ ВЕРСИЯ
-# Улучшенный анализ для 3-5 клипов + исправление Supabase
+# Улучшенный анализ для 3-5 клипов + исправление Supabase + добавлена анимация субтитров в стиле OpusClip
 
 import os
 import json
@@ -16,7 +16,7 @@ import psutil
 import time
 
 # Импорт модуля субтитров на основе ShortGPT
-from shortgpt_captions import create_word_level_subtitles, create_simple_subtitle_filter
+from shortgpt_captions import create_word_level_subtitles
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -328,13 +328,17 @@ def get_video_duration(video_path: str) -> float:
         logger.error(f"Ошибка получения длительности видео: {e}")
         return 60.0  # Fallback
 
-def extract_audio(video_path: str, audio_path: str) -> bool:
-    """Извлечение аудио из видео"""
+def extract_audio(video_path: str, audio_path: str, start_time: float = 0, duration: float = None) -> bool:
+    """Извлечение аудио из видео с поддержкой start_time и duration"""
     try:
         cmd = [
             'ffmpeg', '-i', video_path, '-vn', '-acodec', 'mp3', 
             '-ar', '16000', '-ac', '1', '-y', audio_path
         ]
+        if start_time:
+            cmd.extend(['-ss', str(start_time)])
+        if duration:
+            cmd.extend(['-t', str(duration)])
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return os.path.exists(audio_path)
     except Exception as e:
@@ -573,7 +577,7 @@ class ASSKaraokeSubtitleSystem:
             
             # Создаем уникальное имя файла
             ass_filename = f"subtitles_{uuid.uuid4().hex[:8]}.ass"
-            ass_path = os.path.join("/tmp", ass_filename)
+            ass_path = os.path.join(Config.ASS_DIR, ass_filename)
             
             # Заголовок ASS файла
             ass_content = f"""[Script Info]
@@ -723,13 +727,13 @@ def create_clip_with_ass_subtitles(
             if word_end > start_time and word_start < end_time:
                 
                 # Корректируем время относительно начала клипа
-                clip_word_start = max(0, word_data['start'] - start_time)
-                clip_word_end = min(end_time - start_time, word_data['end'] - start_time)
+                clip_word_start = max(0, word_start - start_time)
+                clip_word_end = min(end_time - start_time, word_end - start_time)
                 
                 # Добавляем только если есть пересечение
                 if clip_word_end > clip_word_start:
                     clip_words.append({
-                        'text': word_data['word'],  # Изменил 'word' на 'text' для совместимости с ShortGPT
+                        'word': word_data['word'],
                         'start': clip_word_start,
                         'end': clip_word_end
                     })
@@ -763,47 +767,26 @@ def create_clip_with_ass_subtitles(
         
         logger.info("✅ ЭТАП 1 завершен: базовое видео создано")
         
-        # ЭТАП 2: Накладываем простые субтитры (подход ShortGPT)
+        # ЭТАП 2: Накладываем ASS субтитры
         if clip_words:
             try:
-                logger.info("📝 ЭТАП 2: Создаем простые субтитры (ShortGPT подход)...")
-                
-                # Создаем transcript_data в правильном формате для getCaptionsWithTime
-                transcript_data = {
-                    'segments': [{
-                        'words': clip_words
-                    }]
-                }
-                
-                # Используем функцию группировки из ShortGPT для создания субтитров по 3-5 слов
-                from shortgpt_captions import create_word_level_subtitles
-                subtitle_segments = create_word_level_subtitles(transcript_data, max_caption_size=25)
-                
-                logger.info(f"📝 Создано {len(subtitle_segments)} групп субтитров (вместо {len(clip_words)} отдельных слов)")
-                
-                # Создаем простой фильтр субтитров
-                subtitle_filter = create_simple_subtitle_filter(subtitle_segments, style)
-                
-                if subtitle_filter:
-                    # Применяем простые drawtext субтитры
+                logger.info("📝 ЭТАП 2: Создаем и накладываем ASS субтитры...")
+                ass_path = ass_subtitle_system.generate_ass_file(clip_words, style, end_time - start_time)
+                if ass_path:
                     subtitle_cmd = [
                         'ffmpeg', '-i', temp_video_path,
-                        '-vf', subtitle_filter,
+                        '-vf', f"ass={ass_path}",
                         '-c:v', 'libx264', '-preset', 'fast',
                         '-c:a', 'copy',
                         '-y', output_path
                     ]
-                    
-                    logger.info("📝 Применяем простые drawtext субтитры...")
+                    logger.info("📝 Применяем ASS субтитры...")
                     result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
                     
                     if result.returncode == 0:
-                        logger.info("✅ ЭТАП 2 завершен: простые субтитры наложены")
-                        
-                        # Удаляем временный файл
-                        if os.path.exists(temp_video_path):
-                            os.remove(temp_video_path)
-                        
+                        logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
+                        os.remove(ass_path)
+                        os.remove(temp_video_path)
                         return True
                     else:
                         logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
@@ -812,14 +795,6 @@ def create_clip_with_ass_subtitles(
                             os.rename(temp_video_path, output_path)
                         logger.info("🔄 Fallback: сохранен клип без субтитров")
                         return True
-                else:
-                    logger.warning("⚠️ Не удалось создать фильтр субтитров")
-                    # Используем видео без субтитров
-                    if os.path.exists(temp_video_path):
-                        os.rename(temp_video_path, output_path)
-                    logger.info("✅ Клип создан без субтитров")
-                    return True
-                    
             except Exception as e:
                 logger.error(f"❌ Ошибка в ЭТАПЕ 2: {e}")
                 # Fallback: используем видео без субтитров
@@ -1231,20 +1206,13 @@ async def generate_clips_task(task_id: str):
                 generation_tasks[task_id]["progress"] = progress
                 generation_tasks[task_id]["current_stage"] = f"Создание клипа {i+1}/{total_clips}"
                 
-                # Получение слов для субтитров в диапазоне времени
-                words_in_range = []
-                if 'words' in transcript_data:
-                    for word_data in transcript_data['words']:
-                        word_start = word_data.get('start', 0)
-                        word_end = word_data.get('end', 0)
-                        
-                        # Проверяем пересечение с диапазоном клипа
-                        if word_start < end_time and word_end > start_time:
-                            # Корректируем время относительно начала клипа
-                            adjusted_word = word_data.copy()
-                            adjusted_word['start'] = max(0, word_start - start_time)
-                            adjusted_word['end'] = min(end_time - start_time, word_end - start_time)
-                            words_in_range.append(adjusted_word)
+                # Извлечение аудио и транскрибация для текущего клипа
+                audio_path = os.path.join(Config.AUDIO_DIR, f"{task_id}_clip_{i}.mp3")
+                if not extract_audio(video_path, audio_path, start_time, end_time - start_time):
+                    logger.error(f"❌ Ошибка извлечения аудио для клипа {i+1}")
+                    continue
+                clip_transcript = safe_transcribe_audio(audio_path)
+                words_in_range = clip_transcript.get('words', []) if clip_transcript else []
                 
                 logger.info(f"📝 Найдено {len(words_in_range)} слов для субтитров")
                 
@@ -1355,4 +1323,3 @@ if __name__ == "__main__":
     
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
