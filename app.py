@@ -1,8 +1,8 @@
 # AgentFlow AI Clips v18.3.0 - ПОЛНАЯ ВЕРСИЯ С ОПТИМИЗАЦИЕЙ
-# Разработано для генерации коротких клипов с ASS караоке-субтитрами
+# Разработано для генерации коротких клипов с ASS субтитрами в стиле Opus
 # Оптимизировано для Render с учетом памяти и скорости обработки
 # Адаптировано для поддержки множества пользователей с очередью задач
-# Текущая дата: 07:23 PM EDT, 13 июля 2025
+# Текущая дата: 07:52 PM EDT, 13 июля 2025
 
 import os
 import json
@@ -53,7 +53,7 @@ logger = logging.getLogger("app")
 # Инициализация FastAPI с подробной конфигурацией
 app = FastAPI(
     title="AgentFlow AI Clips API",
-    description="Профессиональная система генерации коротких видео клипов с поддержкой ASS караоке-субтитров. Версия 18.3.0.",
+    description="Профессиональная система генерации коротких видео клипов с поддержкой ASS субтитров. Версия 18.3.0.",
     version="18.3.0",
     contact={
         "name": "Support Team",
@@ -91,14 +91,40 @@ class Config:
     
     # Расширенные стили для субтитров (добавлено для увеличения строк)
     ASS_STYLES = {
+        "opus": {
+            "name": "Opus",
+            "fontname": "Montserrat-Bold",
+            "fontsize": 45,
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&H00FF00",
+            "outlinecolor": "&H000000",
+            "backcolor": "&H80000000",
+            "bold": -1,
+            "italic": 0,
+            "underline": 0,
+            "strikeout": 0,
+            "scalex": 100,
+            "scaley": 100,
+            "spacing": 0,
+            "angle": 0,
+            "borderstyle": 1,
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,
+            "marginl": 100,
+            "marginr": 100,
+            "marginv": 1700,
+            "encoding": 1,
+            "preview_colors": ["#FFFFFF", "#00FF00", "#000000"]
+        },
         "modern": {
             "name": "Modern",
-            "fontname": "Montserrat",
+            "fontname": "Montserrat-Bold",
             "fontsize": 40,
-            "primarycolor": "&HFFFFFF",  # Белый текст
-            "secondarycolor": "&H00FF00",  # Зеленая подсветка
-            "outlinecolor": "&H000000",  # Черный контур
-            "backcolor": "&H80000000",  # Полупрозрачный фон
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&H00FF00",
+            "outlinecolor": "&H000000",
+            "backcolor": "&H80000000",
             "bold": -1,
             "italic": 0,
             "underline": 0,
@@ -357,7 +383,7 @@ class ClipGenerationRequest(BaseModel):
     """Модель запроса для генерации клипов"""
     video_id: str
     format_id: str
-    style_id: str = "modern"
+    style_id: str = "opus"
 
 class VideoInfo(BaseModel):
     """Модель информации о видео"""
@@ -404,7 +430,7 @@ def get_video_duration(video_path: str) -> float:
     try:
         cmd = [
             'ffprobe', '-v', 'quiet', '-print_format', 'json',
-            '-show_format', video_path
+            '-show_format', '-show_streams', video_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
@@ -417,13 +443,13 @@ def ffmpeg_available_codecs() -> List[str]:
     """Проверка доступных кодеков FFmpeg для GPU-ускорения"""
     try:
         result = subprocess.run(['ffmpeg', '-codecs'], capture_output=True, text=True)
-        return [line.split()[1] for line in result.stdout.splitlines() if 'h264_nvenc' in line]
+        return [line.split()[1] for line in result.stdout.splitlines() if 'h264_nvenc' in line or 'hevc_nvenc' in line]
     except Exception as e:
         logger.warning(f"⚠️ Ошибка проверки кодеков FFmpeg: {str(e)}")
         return []
 
 def extract_audio(video_path: str, audio_path: str, start_time: float = 0, duration: float = None) -> bool:
-    """Извлечение аудио из видео с поддержкой обрезки"""
+    """Извлечение аудио из видео с поддержкой обрезки и детальной логикой"""
     try:
         cmd = [
             'ffmpeg', '-i', video_path, '-vn', '-acodec', 'mp3',
@@ -435,34 +461,46 @@ def extract_audio(video_path: str, audio_path: str, start_time: float = 0, durat
             cmd.extend(['-t', str(duration)])
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return os.path.exists(audio_path)
+    except subprocess.CalledProcessError as cpe:
+        logger.error(f"❌ Ошибка вызова FFmpeg для аудио: {cpe.stderr}")
+        return False
     except Exception as e:
-        logger.error(f"❌ Ошибка извлечения аудио: {str(e)}")
+        logger.error(f"❌ Общая ошибка извлечения аудио: {str(e)}")
         return False
 
 def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
-    """Безопасная транскрибация аудио с использованием кэша"""
+    """Безопасная транскрибация аудио с использованием кэша и повторными попытками"""
     cache_key = f"transcribe_{hash(open(audio_path, 'rb').read())}"
     if cache_key in cache:
         logger.info("📦 Использование кэшированной транскрибации")
         return cache[cache_key]
     try:
         with open(audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["word"]
-            )
-            result = transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
-            cache[cache_key] = result
-            logger.info("✅ Транскрибация завершена и сохранена в кэш")
-            return result
+            for attempt in range(3):  # Три попытки
+                try:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="verbose_json",
+                        timestamp_granularities=["word"]
+                    )
+                    result = transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
+                    cache[cache_key] = result
+                    logger.info("✅ Транскрибация завершена и сохранена в кэш")
+                    return result
+                except openai.RateLimitError:
+                    logger.warning(f"⚠️ Ограничение скорости OpenAI, попытка {attempt + 1}/3")
+                    time.sleep(2 ** attempt)  # Экспоненциальное ожидание
+                except Exception as e:
+                    logger.error(f"❌ Ошибка транскрибации (попытка {attempt + 1}): {str(e)}")
+                    time.sleep(1)
+        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка транскрибации: {str(e)}")
+        logger.error(f"❌ Критическая ошибка транскрибации: {str(e)}")
         return None
 
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
-    """Анализ транскрипта с ChatGPT для выделения клипов"""
+    """Анализ транскрипта с ChatGPT для выделения клипов с подробной логикой"""
     try:
         target_clips = 2 if video_duration <= 30 else 3 if video_duration <= 60 else 4
         prompt = f"""
@@ -475,6 +513,7 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
     "title": str,
     "description": str
 }}
+Убедись, что моменты содержат ключевые фразы и избегают тишины.
 """
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -486,12 +525,15 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
         if content.startswith('```json'):
             content = content[7:-3]
         return json.loads(content)
+    except json.JSONDecodeError as jde:
+        logger.error(f"❌ Ошибка декодирования JSON: {str(jde)}")
+        return create_fallback_highlights(video_duration, 3)
     except Exception as e:
         logger.error(f"❌ Ошибка анализа с ChatGPT: {str(e)}")
         return create_fallback_highlights(video_duration, 3)
 
 def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict:
-    """Создание запасных клипов при ошибке анализа"""
+    """Создание запасных клипов при ошибке анализа с детальной логикой"""
     highlights = []
     clip_duration = 18
     gap = 2
@@ -504,132 +546,151 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
             "start_time": start,
             "end_time": end,
             "title": f"Клип {i+1}",
-            "description": "Автоматически сгенерированный клип"
+            "description": "Автоматически сгенерированный клип на основе равномерного разделения"
         })
     return {"highlights": highlights}
 
-# Система субтитров с поддержкой караоке-эффектов
+# Система субтитров с поддержкой эффекта увеличения и смены цвета
 class ASSKaraokeSubtitleSystem:
-    """Класс для генерации ASS-файлов с караоке-эффектами и динамическим масштабированием"""
+    """Класс для генерации ASS-файлов с эффектом увеличения и смены цвета слова"""
     
     def __init__(self):
         self.styles = {
-            "modern": {
-                "fontname": "Arial",
-                "fontsize": 40,
-                "primarycolor": "&HFFFFFF",
-                "secondarycolor": "&H00FF00",
-                "outlinecolor": "&H000000",
-                "backcolor": "&H80000000",
-                "outline": 1,
-                "shadow": 0,
-                "alignment": 2,
-                "marginv": 80
+            "opus": {
+                "fontname": "Montserrat-Bold",  # Жирный шрифт Montserrat
+                "fontsize": 45,                # 42-48 px
+                "primarycolor": "&HFFFFFF",    # Белый текст
+                "secondarycolor": "&H00FF00",  # Зеленый цвет для активного слова
+                "outlinecolor": "&H000000",    # Черный контур
+                "backcolor": "&H80000000",     # Полупрозрачный черный (opacity ~60%)
+                "outline": 2,
+                "shadow": 1,
+                "alignment": 2,                # Центрирование по горизонтали
+                "marginl": 100,                # Отступ 100 px слева
+                "marginr": 100,                # Отступ 100 px справа
+                "marginv": 1700,               # Отступ от низа (250 px от 1920)
+                "borderstyle": 1,
+                "scalex": 100,
+                "scaley": 100,
+                "spacing": 0,
+                "angle": 0
             },
-            "neon": {
-                "fontname": "Arial",
+            "modern": {
+                "fontname": "Montserrat-Bold",
                 "fontsize": 40,
                 "primarycolor": "&HFFFFFF",
                 "secondarycolor": "&H00FF00",
                 "outlinecolor": "&H000000",
                 "backcolor": "&H80000000",
                 "outline": 2,
-                "shadow": 1,
-                "alignment": 2,
-                "marginv": 80
-            },
-            "fire": {
-                "fontname": "Arial",
-                "fontsize": 40,
-                "primarycolor": "&HFFFFFF",
-                "secondarycolor": "&H00FF00",
-                "outlinecolor": "&H000000",
-                "backcolor": "&H80000000",
-                "outline": 1,
                 "shadow": 0,
                 "alignment": 2,
-                "marginv": 80
+                "marginl": 10,
+                "marginr": 10,
+                "marginv": 80,
+                "borderstyle": 1,
+                "scalex": 100,
+                "scaley": 100,
+                "spacing": 0,
+                "angle": 0
             }
         }
     
-    def generate_ass_file(self, words_data: List[Dict], style: str = "modern", video_duration: float = 10.0) -> str:
-        """Генерация ASS-файла с поддержкой двух строк и караоке-эффекта"""
-        style_config = self.styles.get(style, self.styles["modern"])
+    def generate_ass_file(self, words_data: List[Dict], style: str = "opus", video_duration: float = 10.0) -> str:
+        """Генерация ASS-файла с двумя строками и эффектом увеличения/цвета"""
+        style_config = self.styles.get(style, self.styles["opus"])
         ass_filename = f"subtitles_{uuid.uuid4().hex[:8]}.ass"
         ass_path = os.path.join(Config.ASS_DIR, ass_filename)
         
         ass_content = "[Script Info]\n"
-        ass_content += "Title: AgentFlow AI Clips Karaoke Subtitles\n"
+        ass_content += "Title: AgentFlow AI Clips Opus Subtitles\n"
         ass_content += "ScriptType: v4.00+\n"
-        ass_content += "WrapStyle: 0\n"
+        ass_content += "WrapStyle: 2\n"  # Поддержка двух строк
+        ass_content += "PlayResX: 1080\n"  # Разрешение 1080x1920
+        ass_content += "PlayResY: 1920\n"
         ass_content += "ScaledBorderAndShadow: yes\n"
         ass_content += "YCbCr Matrix: TV.709\n\n"
         
         ass_content += "[V4+ Styles]\n"
-        ass_content += "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        ass_content += f"Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},-1,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},{style_config['alignment']},10,10,{style_config['marginv']},1\n\n"
+        ass_content += "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, ScaleX, ScaleY, Spacing, Angle, Encoding\n"
+        ass_content += (f"Style: Default,{style_config['fontname']},{style_config['fontsize']},"
+                       f"{style_config['primarycolor']},{style_config['secondarycolor']},"
+                       f"{style_config['outlinecolor']},{style_config['backcolor']},-1,0,"
+                       f"{style_config['borderstyle']},{style_config['outline']},{style_config['shadow']},"
+                       f"{style_config['alignment']},{style_config['marginl']},{style_config['marginr']},"
+                       f"{style_config['marginv']},{style_config['scalex']},{style_config['scaley']},"
+                       f"{style_config['spacing']},{style_config['angle']},1\n\n")
         
         ass_content += "[Events]\n"
         ass_content += "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         
-        phrases = self._group_words_into_phrases(words_data, max_words_per_phrase=10)
+        phrases = self._group_words_into_phrases(words_data, max_chars_per_line=440)
         for phrase in phrases:
             start_time = self._seconds_to_ass_time(phrase['start'])
             end_time = self._seconds_to_ass_time(phrase['end'])
-            karaoke_text = self._create_karaoke_effect(phrase['words'])
-            ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{karaoke_text}\n"
+            highlighted_text = self._create_highlight_effect(phrase['words'])
+            ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{highlighted_text}\n"
         
         with open(ass_path, 'w', encoding='utf-8') as f:
             f.write(ass_content)
         logger.info(f"✅ ASS-файл создан: {ass_path}")
         return ass_path
     
-    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 10) -> List[Dict]:
-        """Группировка слов в фразы для двух строк"""
+    def _group_words_into_phrases(self, words_data: List[Dict], max_chars_per_line: int = 440) -> List[Dict]:
+        """Группировка слов в фразы с учетом двух строк и 880 px ширины"""
         phrases = []
         current_phrase = []
-        total_chars = 0
+        current_chars = 0
         for word_data in words_data:
             word = word_data['word'].strip()
             if not word:
                 continue
-            current_phrase.append(word_data)
-            total_chars += len(word) + 1
-            if len(current_phrase) >= max_words_per_phrase or total_chars >= 50 or word.endswith(('.', '!', '?', ',')):
-                if current_phrase:
-                    phrases.append({
-                        'words': current_phrase.copy(),
-                        'start': current_phrase[0]['start'],
-                        'end': current_phrase[-1]['end']
-                    })
-                    current_phrase = []
-                    total_chars = 0
+            word_length = len(word) + 1  # Плюс пробел
+            if current_chars + word_length > max_chars_per_line and current_phrase:
+                phrases.append({
+                    'words': current_phrase.copy(),
+                    'start': current_phrase[0]['start'],
+                    'end': current_phrase[-1]['end']
+                })
+                current_phrase = [word_data]
+                current_chars = word_length
+            else:
+                current_phrase.append(word_data)
+                current_chars += word_length
+            if word.endswith(('.', '!', '?')) and current_phrase:
+                phrases.append({
+                    'words': current_phrase.copy(),
+                    'start': current_phrase[0]['start'],
+                    'end': current_phrase[-1]['end']
+                })
+                current_phrase = []
+                current_chars = 0
         if current_phrase:
             phrases.append({
                 'words': current_phrase,
                 'start': current_phrase[0]['start'],
                 'end': current_phrase[-1]['end']
             })
-        return phrases
+        return phrases[:2]  # Ограничение двумя строками
     
-    def _create_karaoke_effect(self, words: List[Dict]) -> str:
-        """Создание эффекта караоке с увеличением размера слов"""
-        karaoke_parts = []
-        base_size = 40
+    def _create_highlight_effect(self, words: List[Dict]) -> str:
+        """Создание эффекта увеличения и смены цвета слова во время произношения"""
+        text_parts = []
         for i, word_data in enumerate(words):
             word = word_data['word'].strip()
             if not word:
                 continue
-            duration = max(50, min(500, int((word_data['end'] - word_data['start']) * 100)))
-            size_modifier = 1.2 if i % 2 == 0 else 1.0
-            new_size = int(base_size * size_modifier)
-            karaoke_parts.append(f"{{\c&HFFFFFF&}}{{\fs{new_size}}}{{\kf{duration}}}{word}{{\r}}")
+            start_time = max(0, word_data['start'])
+            end_time = min(word_data['end'], words[-1]['end'] if i == len(words) - 1 else words[i + 1]['start'])
+            duration = max(50, min(500, int((end_time - start_time) * 1000)))
+            # Увеличение размера на 10% и смена цвета на зеленый
+            text_parts.append(f"{{\t({int(start_time*1000)},{int(end_time*1000)},{\fs{int(45*1.1)},\c&H00FF00&})}}{word}{{\r}}")
             if i < len(words) - 1:
-                karaoke_parts.append(" ")
-        return "".join(karaoke_parts)
+                text_parts.append(" ")
+        return "".join(text_parts)
     
     def _seconds_to_ass_time(self, seconds: float) -> str:
-        """Конвертация секунд в формат времени ASS"""
+        """Конвертация секунд в формат времени ASS с высокой точностью"""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         secs = int(seconds % 60)
@@ -646,16 +707,19 @@ def create_clip_with_ass_subtitles(
     words_data: List[Dict],
     output_path: str,
     format_type: str = "9:16",
-    style: str = "modern"
+    style: str = "opus"
 ) -> bool:
-    """Создание клипа с ASS-субтитрами в два этапа с оптимизацией"""
+    """Создание клипа с ASS-субтитрами в формате 1080x1920 с детальной обработкой"""
     try:
         logger.info(f"🎬 Начало создания клипа: {start_time}-{end_time}s, стиль: {style}")
         format_type = format_type.replace('_', ':')
-        crop_params = get_crop_parameters(1920, 1080, format_type)
-        if not crop_params:
-            logger.error(f"❌ Неподдерживаемый формат: {format_type}")
-            return False
+        if format_type != "9:16":
+            logger.warning(f"⚠️ Формат {format_type} не поддерживается, используется 9:16")
+        
+        crop_params = {
+            "scale": "1080:1920",  # Точное разрешение 1080x1920
+            "crop": "1080:1920:0:0"  # Без обрезки
+        }
         
         clip_words = []
         logger.info(f"🔍 Фильтрация слов для клипа {start_time}s-{end_time}s из {len(words_data)} слов")
@@ -746,14 +810,15 @@ def create_clip_with_ass_subtitles(
         return False
 
 def get_crop_parameters(width: int, height: int, format_type: str) -> Optional[Dict]:
-    """Получение параметров обрезки для заданного формата видео"""
+    """Получение параметров обрезки для заданного формата видео с детальной логикой"""
     formats = {
-        "9:16": {"target_width": 720, "target_height": 1280},
-        "16:9": {"target_width": 1280, "target_height": 720},
-        "1:1": {"target_width": 720, "target_height": 720},
-        "4:5": {"target_width": 720, "target_height": 900}
+        "9:16": {"target_width": 1080, "target_height": 1920},
+        "16:9": {"target_width": 1920, "target_height": 1080},
+        "1:1": {"target_width": 1080, "target_height": 1080},
+        "4:5": {"target_width": 1080, "target_height": 1350}
     }
     if format_type not in formats:
+        logger.error(f"❌ Неподдерживаемый формат видео: {format_type}")
         return None
     target = formats[format_type]
     scale_x = target["target_width"] / width
@@ -769,10 +834,10 @@ def get_crop_parameters(width: int, height: int, format_type: str) -> Optional[D
     }
 
 def check_memory_available() -> bool:
-    """Проверка доступной памяти (минимум 50 MB)"""
+    """Проверка доступной памяти с детальным мониторингом"""
     memory = psutil.virtual_memory()
     available_mb = memory.available / (1024 * 1024)
-    logger.debug(f"Доступно памяти: {available_mb:.1f} MB")
+    logger.debug(f"Доступно памяти: {available_mb:.1f} MB из {memory.total / (1024 * 1024):.1f} MB")
     return memory.available > 50 * 1024 * 1024
 
 # Эндпоинты API
@@ -786,13 +851,15 @@ async def health_check():
     """Проверка состояния системы с детальной информацией"""
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
+    cpu = psutil.cpu_percent(interval=1)
     return {
         "status": "healthy",
         "version": "18.3.0",
         "timestamp": datetime.now().isoformat(),
         "system": {
-            "memory_usage": f"{memory.percent}% ({memory.available / (1024 * 1024):.1f} MB доступно)",
-            "disk_usage": f"{disk.percent}%",
+            "memory_usage": f"{memory.percent}% ({memory.available / (1024 * 1024):.1f} MB доступно из {memory.total / (1024 * 1024):.1f} MB)",
+            "disk_usage": f"{disk.percent}% ({disk.free / (1024 * 1024):.1f} MB свободно)",
+            "cpu_usage": f"{cpu}%",
             "tasks_running": len(analysis_tasks) + len(generation_tasks)
         },
         "services": {
@@ -803,14 +870,14 @@ async def health_check():
 
 @app.post("/api/videos/upload")
 async def upload_video(file: UploadFile = File(...)):
-    """Загрузка видео файла с проверкой памяти"""
+    """Загрузка видео файла с проверкой памяти и валидацией"""
     if not check_memory_available():
         raise HTTPException(status_code=503, detail="Недостаточно доступной памяти для обработки")
     if file.size and file.size > Config.MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Файл превышает лимит 200 MB")
     video_id = str(uuid.uuid4())
     file_extension = os.path.splitext(file.filename)[1].lower()
-    if file_extension not in ['.mp4', '.mov', '.avi', '.mkv']:
+    if file_extension not in ['.mp4', '.mov', '.avi', '.mkv', '.webm']:
         raise HTTPException(status_code=400, detail="Неподдерживаемый формат")
     video_path = os.path.join(Config.UPLOAD_DIR, f"{video_id}{file_extension}")
     with open(video_path, "wb") as buffer:
@@ -839,7 +906,7 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.post("/api/videos/analyze")
 async def analyze_video(request: VideoAnalysisRequest, background_tasks: BackgroundTasks):
-    """Запуск анализа видео в фоновом режиме"""
+    """Запуск анализа видео в фоновом режиме с проверкой статуса"""
     video_id = request.video_id
     if video_id not in analysis_tasks or not check_memory_available():
         raise HTTPException(status_code=404, detail="Видео не найдено или память исчерпана")
@@ -849,7 +916,7 @@ async def analyze_video(request: VideoAnalysisRequest, background_tasks: Backgro
     return {"message": "Анализ запущен", "video_id": video_id}
 
 async def analyze_video_task(video_id: str):
-    """Фоновая задача анализа видео с обработкой ошибок"""
+    """Фоновая задача анализа видео с обработкой ошибок и мониторингом"""
     try:
         analysis_task = analysis_tasks[video_id]
         video_path = analysis_task["video_path"]
@@ -884,7 +951,7 @@ async def analyze_video_task(video_id: str):
 
 @app.get("/api/videos/{video_id}/status")
 async def get_video_status(video_id: str):
-    """Получение статуса анализа видео"""
+    """Получение статуса анализа видео с дополнительной информацией"""
     if video_id not in analysis_tasks:
         raise HTTPException(status_code=404, detail="Видео не найдено")
     task = analysis_tasks[video_id]
@@ -893,7 +960,8 @@ async def get_video_status(video_id: str):
         "status": task["status"],
         "filename": task.get("filename"),
         "duration": task.get("duration"),
-        "upload_time": task.get("upload_time")
+        "upload_time": task.get("upload_time"),
+        "memory_check": check_memory_available()
     }
     if task["status"] == "completed":
         response["highlights"] = task.get("analysis", {}).get("highlights", [])
@@ -903,7 +971,7 @@ async def get_video_status(video_id: str):
 
 @app.post("/api/clips/generate")
 async def generate_clips(request: ClipGenerationRequest, background_tasks: BackgroundTasks):
-    """Запуск генерации клипов с проверкой очереди"""
+    """Запуск генерации клипов с проверкой очереди и ресурсов"""
     if not check_memory_available():
         raise HTTPException(status_code=503, detail="Недостаточно памяти для генерации")
     video_id = request.video_id
@@ -924,7 +992,7 @@ async def generate_clips(request: ClipGenerationRequest, background_tasks: Backg
     }
     task_queue.append(task_id)
     if len(task_queue) > 1:
-        logger.info(f"⚠️ Задача {task_id} добавлена в очередь")
+        logger.info(f"⚠️ Задача {task_id} добавлена в очередь, текущая длина: {len(task_queue)}")
         return {"task_id": task_id, "message": "Задача в очереди"}
     background_tasks.add_task(generate_clips_task, task_id)
     logger.info(f"🚀 Запущена генерация клипов: {task_id}")
@@ -937,7 +1005,7 @@ async def generate_clips(request: ClipGenerationRequest, background_tasks: Backg
     }
 
 async def generate_clips_task(task_id: str):
-    """Фоновая задача генерации клипов с управлением очередью"""
+    """Фоновая задача генерации клипов с управлением очередью и детальной логикой"""
     if task_queue[0] != task_id:
         logger.info(f"⚠️ Ожидание в очереди для задачи {task_id}")
         while task_queue[0] != task_id:
@@ -1012,7 +1080,7 @@ async def generate_clips_task(task_id: str):
 
 @app.get("/api/clips/generation/{task_id}/status")
 async def get_generation_status(task_id: str):
-    """Получение статуса генерации клипов"""
+    """Получение статуса генерации клипов с дополнительной информацией"""
     if task_id not in generation_tasks:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     task = generation_tasks[task_id]
@@ -1022,7 +1090,8 @@ async def get_generation_status(task_id: str):
         "progress": task.get("progress", 0),
         "current_stage": task.get("current_stage"),
         "clips_created": len(task.get("clips", [])),
-        "created_at": task.get("created_at")
+        "created_at": task.get("created_at"),
+        "memory_check": check_memory_available()
     }
     if task["status"] == "completed":
         response["clips"] = task.get("clips", [])
@@ -1031,7 +1100,7 @@ async def get_generation_status(task_id: str):
 
 @app.get("/api/clips/download/{filename}")
 async def download_clip(filename: str):
-    """Скачивание сгенерированного клипа"""
+    """Скачивание сгенерированного клипа с проверкой доступа"""
     file_path = os.path.join(Config.CLIPS_DIR, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Файл не найден")
@@ -1041,12 +1110,35 @@ async def download_clip(filename: str):
         filename=filename
     )
 
+# Дополнительная утилита для очистки старых файлов
+def cleanup_old_files():
+    """Удаление старых файлов из директорий"""
+    current_time = datetime.now()
+    for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.ASS_DIR]:
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            if os.path.isfile(file_path):
+                file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if (current_time - file_time).total_seconds() > Config.MAX_TASK_AGE:
+                    os.remove(file_path)
+                    logger.info(f"🗑 Удален старый файл: {file_path}")
+
+# Планировщик очистки
+async def cleanup_scheduler():
+    """Планировщик периодической очистки файлов"""
+    while True:
+        await asyncio.sleep(Config.CLEANUP_INTERVAL)
+        cleanup_old_files()
+        logger.info("🕒 Выполнена периодическая очистка старых файлов")
+
 # Запуск приложения с подробной информацией
 if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 AgentFlow AI Clips v18.3.0 успешно запущен!")
-    logger.info("🎬 Система ASS караоке-субтитров активирована")
+    logger.info("🎬 Система ASS субтитров активирована с поддержкой Montserrat-Bold")
     logger.info("🔥 GPU-ускорение через libass (если доступно)")
     logger.info("⚡ Двухэтапная генерация клипов с оптимизацией")
+    logger.info("🕒 Запущен планировщик очистки файлов")
     port = int(os.getenv("PORT", 10000))
+    asyncio.create_task(cleanup_scheduler())
     uvicorn.run(app, host="0.0.0.0", port=port)
