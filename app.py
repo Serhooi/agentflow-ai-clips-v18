@@ -1,5 +1,6 @@
 # AgentFlow AI Clips v18.3.0 - ВОССТАНОВЛЕННАЯ РАБОЧАЯ ВЕРСИЯ
 # Улучшенный анализ для 3-5 клипов + исправление Supabase + добавлена анимация субтитров в стиле OpusClip
+# Адаптировано для Render с учетом лимитов памяти и времени
 
 import os
 import json
@@ -45,7 +46,7 @@ logger = logging.getLogger("app")
 app = FastAPI(
     title="AgentFlow AI Clips API",
     description="Профессиональная система генерации коротких клипов с ASS караоке-субтитрами",
-    version="18.1.7"
+    version="18.3.0"
 )
 
 # CORS настройки
@@ -78,8 +79,8 @@ class Config:
             "name": "Modern",
             "fontname": "Montserrat",
             "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H00ff00",
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&H00FF00",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -98,14 +99,14 @@ class Config:
             "marginr": 10,
             "marginv": 60,
             "encoding": 1,
-            "preview_colors": ["#ffffff", "#00ff00", "#000000"]
+            "preview_colors": ["#FFFFFF", "#00FF00", "#000000"]
         },
         "neon": {
             "name": "Neon",
             "fontname": "Arial",
             "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff00ff",
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&HFF00FF",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -124,14 +125,14 @@ class Config:
             "marginr": 10,
             "marginv": 60,
             "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff00ff", "#000000"]
+            "preview_colors": ["#FFFFFF", "#FF00FF", "#000000"]
         },
         "fire": {
             "name": "Fire",
             "fontname": "Impact",
             "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H0080ff",
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&HFF8000",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -150,14 +151,14 @@ class Config:
             "marginr": 10,
             "marginv": 60,
             "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff8000", "#000000"]
+            "preview_colors": ["#FFFFFF", "#FF8000", "#000000"]
         },
         "elegant": {
             "name": "Elegant",
             "fontname": "Georgia",
             "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H00ffff",
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&HFFFF00",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": 0,
@@ -176,7 +177,59 @@ class Config:
             "marginr": 10,
             "marginv": 60,
             "encoding": 1,
-            "preview_colors": ["#ffffff", "#ffff00", "#000000"]
+            "preview_colors": ["#FFFFFF", "#FFFF00", "#000000"]
+        },
+        "classic": {
+            "name": "Classic",
+            "fontname": "Times New Roman",
+            "fontsize": 16,
+            "primarycolor": "&HFFFFFF",
+            "secondarycolor": "&H00FF00",
+            "outlinecolor": "&H000000",
+            "backcolor": "&H80000000",
+            "bold": 0,
+            "italic": 0,
+            "underline": 0,
+            "strikeout": 0,
+            "scalex": 100,
+            "scaley": 100,
+            "spacing": 0,
+            "angle": 0,
+            "borderstyle": 1,
+            "outline": 1,
+            "shadow": 0,
+            "alignment": 2,
+            "marginl": 10,
+            "marginr": 10,
+            "marginv": 60,
+            "encoding": 1,
+            "preview_colors": ["#FFFFFF", "#00FF00", "#000000"]
+        },
+        "vintage": {
+            "name": "Vintage",
+            "fontname": "Courier",
+            "fontsize": 16,
+            "primarycolor": "&HFFD700",
+            "secondarycolor": "&HADFF2F",
+            "outlinecolor": "&H000000",
+            "backcolor": "&H80000000",
+            "bold": -1,
+            "italic": 0,
+            "underline": 0,
+            "strikeout": 0,
+            "scalex": 100,
+            "scaley": 100,
+            "spacing": 0,
+            "angle": 0,
+            "borderstyle": 1,
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,
+            "marginl": 10,
+            "marginr": 10,
+            "marginv": 60,
+            "encoding": 1,
+            "preview_colors": ["#FFD700", "#ADFF2F", "#000000"]
         }
     }
 
@@ -219,15 +272,11 @@ def init_supabase():
             logger.warning("⚠️ Не все Supabase переменные настроены")
             return False
         
-        # Основной клиент
         supabase = create_client(supabase_url, supabase_anon_key)
-        
-        # Service role клиент для загрузки файлов
         service_supabase = create_client(supabase_url, supabase_service_key)
         
         logger.info("✅ Supabase Storage подключен")
         return True
-        
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Supabase: {e}")
         return False
@@ -316,6 +365,15 @@ def get_video_duration(video_path: str) -> float:
     except Exception as e:
         logger.error(f"Ошибка получения длительности видео: {e}")
         return 60.0  # Fallback
+
+def ffmpeg_available_codecs():
+    """Проверка доступных кодеков FFmpeg"""
+    try:
+        result = subprocess.run(['ffmpeg', '-codecs'], capture_output=True, text=True)
+        return [line.split()[1] for line in result.stdout.splitlines() if 'h264_nvenc' in line]
+    except Exception as e:
+        logger.warning(f"Ошибка проверки кодеков FFmpeg: {e}")
+        return []
 
 def extract_audio(video_path: str, audio_path: str, start_time: float = 0, duration: float = None) -> bool:
     """Извлечение аудио из видео с поддержкой start_time и duration"""
@@ -642,7 +700,7 @@ def create_clip_with_ass_subtitles(
     ЭТАП 2: Наложение ASS субтитров
     """
     try:
-        logger.info(f"🎬 Начинаем создание клипа с ASS субтитрами")
+        logger.info(f"🎬 Начинаем создание клипа с ASS субтитрами: {start_time}-{end_time}s")
         logger.info(f"📊 Параметры: {start_time}-{end_time}s, формат {format_type}, стиль {style}")
         
         format_type = format_type.replace('_', ':')
@@ -672,19 +730,21 @@ def create_clip_with_ass_subtitles(
         
         temp_video_path = output_path.replace('.mp4', '_temp.mp4')
         
+        nvenc_available = 'h264_nvenc' in ffmpeg_available_codecs()
+        codec = 'h264_nvenc' if nvenc_available else 'libx264'
+        
         base_cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(start_time),
             '-t', str(end_time - start_time),
             '-vf', f"scale={crop_params['scale']},crop={crop_params['crop']}",
-            '-c:v', 'libx264', '-preset', 'fast',
+            '-c:v', codec, '-preset', 'fast',
             '-c:a', 'aac', '-b:a', '128k',
             '-y', temp_video_path
         ]
         
         logger.info("🎬 ЭТАП 1: Создаем базовое видео...")
         result = subprocess.run(base_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-        
         if result.returncode != 0:
             logger.error(f"❌ ЭТАП 1 неудачен: {result.stderr}")
             return False
@@ -699,40 +759,40 @@ def create_clip_with_ass_subtitles(
                     subtitle_cmd = [
                         'ffmpeg', '-i', temp_video_path,
                         '-vf', f"ass={ass_path}",
-                        '-c:v', 'libx264', '-preset', 'fast',
+                        '-c:v', codec, '-preset', 'fast',
                         '-c:a', 'copy',
                         '-y', output_path
                     ]
                     logger.info("📝 Применяем ASS субтитры...")
                     result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-                    
-                    if result.returncode == 0:
-                        logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
-                        os.remove(ass_path)
-                        os.remove(temp_video_path)
-                        return True
-                    else:
+                    if result.returncode != 0:
                         logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
                         if os.path.exists(temp_video_path):
                             os.rename(temp_video_path, output_path)
-                        logger.info("🔄 Fallback: сохранен клип без субтитров")
                         return True
+                    logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
+                    os.remove(ass_path)
+                    os.remove(temp_video_path)
+                    return True
             except Exception as e:
                 logger.error(f"❌ Ошибка в ЭТАПЕ 2: {e}")
                 if os.path.exists(temp_video_path):
                     os.rename(temp_video_path, output_path)
-                logger.info("🔄 Fallback: сохранен клип без субтитров")
                 return True
         else:
             if os.path.exists(temp_video_path):
                 os.rename(temp_video_path, output_path)
             logger.info("✅ Клип создан без субтитров (нет слов)")
             return True
-    except subprocess.TimeoutExpired:
-        logger.error("❌ Таймаут при создании клипа")
+    except subprocess.TimeoutExpired as te:
+        logger.error(f"❌ Таймаут при создании клипа: {te}")
+        if os.path.exists(temp_video_path):
+            os.rename(temp_video_path, output_path)
         return False
     except Exception as e:
         logger.error(f"❌ Ошибка создания клипа: {e}")
+        if os.path.exists(temp_video_path):
+            os.rename(temp_video_path, output_path)
         return False
 
 def get_crop_parameters(width: int, height: int, format_type: str) -> Optional[Dict]:
@@ -1147,7 +1207,7 @@ if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 AgentFlow AI Clips v18.3.0 started!")
     logger.info("🎬 ASS караоке-система активирована")
-    logger.info("🔥 GPU-ускорение через libass")
+    logger.info("🔥 GPU-ускорение через libass (если доступно)")
     logger.info("⚡ Двухэтапная генерация клипов")
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
