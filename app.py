@@ -2,7 +2,7 @@
 # Разработано для генерации коротких клипов с ASS субтитрами в стиле Opus
 # Оптимизировано для Render с учетом памяти и скорости обработки
 # Адаптировано для поддержки множества пользователей с очередью задач
-# Текущая дата: 07:52 PM EDT, 13 июля 2025
+# Текущая дата: 07:58 PM EDT, 13 июля 2025
 
 import os
 import json
@@ -89,7 +89,7 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60        # Удаление задач старше 24 часов
     CLEANUP_INTERVAL = 3600            # Очистка каждые 60 минут
     
-    # Расширенные стили для субтитров (добавлено для увеличения строк)
+    # Расширенные стили для субтитров
     ASS_STYLES = {
         "opus": {
             "name": "Opus",
@@ -683,8 +683,9 @@ class ASSKaraokeSubtitleSystem:
             start_time = max(0, word_data['start'])
             end_time = min(word_data['end'], words[-1]['end'] if i == len(words) - 1 else words[i + 1]['start'])
             duration = max(50, min(500, int((end_time - start_time) * 1000)))
-            # Увеличение размера на 10% и смена цвета на зеленый
-            text_parts.append(f"{{\t({int(start_time*1000)},{int(end_time*1000)},{\fs{int(45*1.1)},\c&H00FF00&})}}{word}{{\r}}")
+            # Исправлено: экранирование через конкатенацию вместо f-строки с \
+            effect_str = f"{{t({int(start_time*1000)},{int(end_time*1000)},fs{int(45*1.1)},c&H00FF00&)}}"
+            text_parts.append(effect_str + word + "{r}")
             if i < len(words) - 1:
                 text_parts.append(" ")
         return "".join(text_parts)
@@ -1108,7 +1109,7 @@ async def download_clip(filename: str):
         file_path,
         media_type="video/mp4",
         filename=filename
-    )
+   )
 
 # Дополнительная утилита для очистки старых файлов
 def cleanup_old_files():
