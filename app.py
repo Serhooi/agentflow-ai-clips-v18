@@ -8,20 +8,16 @@ import asyncio
 import logging
 import subprocess
 import tempfile
-import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Any
-from pathlib import Path
 import psutil
-import time
 
 # Импорт модуля субтитров на основе ShortGPT
 from shortgpt_captions import create_word_level_subtitles
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import openai
 from openai import OpenAI
@@ -32,6 +28,7 @@ try:
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
+    logger = logging.getLogger("app")
     logger.warning("Supabase не установлен")
 
 # Настройка логирования
@@ -59,27 +56,20 @@ app.add_middleware(
 
 # Конфигурация
 class Config:
-    # Основные папки
     UPLOAD_DIR = "uploads"
     AUDIO_DIR = "audio"
     CLIPS_DIR = "clips"
     ASS_DIR = "ass_subtitles"
-    
-    # Лимиты
     MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-    
-    # Настройки очистки
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
-    CLEANUP_INTERVAL = 3600      # Очистка каждый час
-    
-    # ASS стили для караоке
+    CLEANUP_INTERVAL = 3600  # Очистка каждый час
     ASS_STYLES = {
         "modern": {
             "name": "Modern",
             "fontname": "Montserrat",
             "fontsize": 16,
-            "primarycolor": "&Hffffff",  # Белый текст
-            "secondarycolor": "&H00ff00",  # Зеленая подсветка караоке
+            "primarycolor": "&Hffffff",
+            "secondarycolor": "&H00ff00",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -96,7 +86,7 @@ class Config:
             "alignment": 2,
             "marginl": 10,
             "marginr": 10,
-            "marginv": 60,  # Safe zone снизу
+            "marginv": 60,
             "encoding": 1,
             "preview_colors": ["#ffffff", "#00ff00", "#000000"]
         },
@@ -105,7 +95,7 @@ class Config:
             "fontname": "Arial",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff00ff",  # Пурпурная подсветка
+            "secondarycolor": "&Hff00ff",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -131,7 +121,7 @@ class Config:
             "fontname": "Impact",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff8000",  # Оранжевая подсветка
+            "secondarycolor": "&Hff8000",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": -1,
@@ -157,7 +147,7 @@ class Config:
             "fontname": "Georgia",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hffff00",  # Желтая подсветка
+            "secondarycolor": "&Hffff00",
             "outlinecolor": "&H000000",
             "backcolor": "&H80000000",
             "bold": 0,
@@ -205,34 +195,24 @@ SUPABASE_BUCKET = "video-results"
 def init_supabase():
     """Инициализация Supabase клиентов"""
     global supabase, service_supabase
-    
     if not SUPABASE_AVAILABLE:
         logger.warning("⚠️ Supabase не установлен")
         return False
-    
     try:
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
         supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        
         if not all([supabase_url, supabase_anon_key, supabase_service_key]):
             logger.warning("⚠️ Не все Supabase переменные настроены")
             return False
-        
-        # Основной клиент
         supabase = create_client(supabase_url, supabase_anon_key)
-        
-        # Service role клиент для загрузки файлов
         service_supabase = create_client(supabase_url, supabase_service_key)
-        
         logger.info("✅ Supabase Storage подключен")
         return True
-        
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Supabase: {e}")
         return False
 
-# Инициализация Supabase при запуске
 supabase_available = init_supabase()
 
 # Pydantic модели
@@ -267,13 +247,11 @@ def upload_clip_to_supabase(local_path: str, filename: str) -> str:
     if not supabase_available or not service_supabase:
         logger.warning("⚠️ Supabase недоступен, возвращаем локальный путь")
         return f"/api/clips/download/{filename}"
-    
     try:
         with open(local_path, "rb") as clip_file:
             storage_path = f"clips/{datetime.now().strftime('%Y%m%d')}/{filename}"
-            headers = {"Content-Type": "video/mp4"}
             response = service_supabase.storage.from_(SUPABASE_BUCKET).upload(
-                storage_path, clip_file, headers=headers
+                storage_path, clip_file, {"content-type": "video/mp4"}
             )
             if response:
                 public_url = service_supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
@@ -287,10 +265,7 @@ def upload_clip_to_supabase(local_path: str, filename: str) -> str:
 def get_video_duration(video_path: str) -> float:
     """Получение длительности видео"""
     try:
-        cmd = [
-            'ffprobe', '-v', 'quiet', '-print_format', 'json', 
-            '-show_format', video_path
-        ]
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', video_path]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         return float(data['format']['duration'])
@@ -301,10 +276,7 @@ def get_video_duration(video_path: str) -> float:
 def extract_audio(video_path: str, audio_path: str) -> bool:
     """Извлечение аудио из видео"""
     try:
-        cmd = [
-            'ffmpeg', '-i', video_path, '-vn', '-acodec', 'mp3', 
-            '-ar', '16000', '-ac', '1', '-y', audio_path
-        ]
+        cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'mp3', '-ar', '16000', '-ac', '1', '-y', audio_path]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return os.path.exists(audio_path)
     except Exception as e:
@@ -330,7 +302,6 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
     """Улучшенный анализ транскрипта с ChatGPT для получения 3-5 клипов"""
     try:
         target_clips = 2 if video_duration <= 30 else 3 if video_duration <= 60 else 4 if video_duration <= 120 else 5
-        
         prompt = f"""
 Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных и разнообразных моментов для коротких клипов.
 
@@ -366,21 +337,18 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
 
 ВАЖНО: Отвечай ТОЛЬКО JSON, без дополнительного текста!
 """
-        
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1500,
             temperature=0.7
         )
-        
         content = response.choices[0].message.content.strip()
         if content.startswith('```json'):
             content = content[7:]
         if content.endswith('```'):
             content = content[:-3]
         content = content.strip()
-        
         try:
             result = json.loads(content)
             highlights = result.get("highlights", [])
@@ -409,18 +377,14 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
     highlights = []
     clip_duration = 18
     gap = 2
-    
     for i in range(target_clips):
         start = i * (clip_duration + gap)
         end = start + clip_duration
-        
         if end > video_duration:
             end = video_duration
             start = max(0, end - clip_duration)
-        
         if start >= video_duration - 5:
             break
-            
         highlights.append({
             "start_time": start,
             "end_time": end,
@@ -428,7 +392,6 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
             "description": "Автоматически созданный клип",
             "keywords": []
         })
-    
     return {"highlights": highlights}
 
 # Революционная система субтитров с ASS-форматом и караоке-эффектом
@@ -568,7 +531,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         centiseconds = int((seconds % 1) * 100)
         return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
 
-# Инициализируем систему ASS караоке
 ass_subtitle_system = ASSKaraokeSubtitleSystem()
 
 def create_clip_with_ass_subtitles(
@@ -582,9 +544,6 @@ def create_clip_with_ass_subtitles(
 ) -> bool:
     """
     Создает клип с ASS субтитрами (двухэтапный процесс)
-    
-    ЭТАП 1: Создание базового видео с обрезкой
-    ЭТАП 2: Наложение ASS субтитров
     """
     try:
         logger.info(f"🎬 Начинаем создание клипа с ASS субтитрами")
@@ -601,16 +560,16 @@ def create_clip_with_ass_subtitles(
         for word_data in words_data:
             word_start = word_data.get('start', 0)
             word_end = word_data.get('end', 0)
-            if word_start <= end_time and word_end >= start_time:
+            if word_start < end_time and word_end > start_time:
                 clip_word_start = max(0, word_start - start_time)
                 clip_word_end = min(end_time - start_time, word_end - start_time)
                 if clip_word_end > clip_word_start:
                     clip_words.append({
-                        'text': word_data.get('word', ''),
+                        'word': word_data.get('word', word_data.get('text', '')),
                         'start': clip_word_start,
                         'end': clip_word_end
                     })
-                    logger.debug(f"✅ Слово '{word_data.get('word', '')}' добавлено: {clip_word_start:.1f}s-{clip_word_end:.1f}s")
+                    logger.debug(f"✅ Слово '{word_data.get('word', word_data.get('text', ''))}' добавлено: {clip_word_start:.1f}s-{clip_word_end:.1f}s")
         
         logger.info(f"📝 Найдено {len(clip_words)} слов для субтитров")
         temp_video_path = output_path.replace('.mp4', '_temp.mp4')
@@ -636,13 +595,6 @@ def create_clip_with_ass_subtitles(
         if clip_words:
             try:
                 logger.info("📝 ЭТАП 2: Создаем ASS субтитры (караоке-подход)...")
-                transcript_data = {'segments': [{'words': clip_words}]}
-                subtitle_segments = create_word_level_subtitles(transcript_data, max_caption_size=25)
-                logger.info(f"📝 Создано {len(subtitle_segments)} групп субтитров")
-                
-                if not subtitle_segments:
-                    logger.warning("⚠️ Сегменты субтитров пусты")
-                
                 ass_path = ass_subtitle_system.generate_ass_file(clip_words, style, end_time - start_time)
                 if ass_path:
                     subtitle_cmd = [
@@ -943,7 +895,6 @@ async def generate_clips_task(task_id: str):
         highlights = analysis_task["analysis"]["highlights"]
         transcript_data = analysis_task.get("transcript", {})
         generation_tasks[task_id]["status"] = "generating"
-        logger.info(f"🚀 Запущена генерация клипов: {task_id}")
         logger.info(f"🎬 Начинаю генерацию {len(highlights)} клипов")
         clips_created = 0
         total_clips = len(highlights)
@@ -960,13 +911,12 @@ async def generate_clips_task(task_id: str):
                     for word_data in transcript_data['words']:
                         word_start = word_data.get('start', 0)
                         word_end = word_data.get('end', 0)
-                        if word_start <= end_time and word_end >= start_time:
+                        if word_start < end_time and word_end > start_time:
                             adjusted_word = word_data.copy()
                             adjusted_word['start'] = max(0, word_start - start_time)
                             adjusted_word['end'] = min(end_time - start_time, word_end - start_time)
                             if adjusted_word['end'] > adjusted_word['start']:
                                 words_in_range.append(adjusted_word)
-                                logger.debug(f"✅ Слово '{word_data.get('word', '')}' добавлено: {adjusted_word['start']:.1f}s-{adjusted_word['end']:.1f}s")
                 logger.info(f"📝 Найдено {len(words_in_range)} слов для субтитров в диапазоне {start_time}-{end_time}s")
                 clip_filename = f"{task_id}_clip_{i+1}_{format_id.replace(':', 'x')}.mp4"
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
