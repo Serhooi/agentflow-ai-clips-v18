@@ -1,4 +1,4 @@
-# AgentFlow AI Clips v18.5.5 - Интеграция WebVTT субтитров с анимацией
+# AgentFlow AI Clips v18.5.6 - Интеграция Remotion для анимированных субтитров
 import os
 import json
 import uuid
@@ -9,6 +9,7 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import psutil
+import shutil
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,16 @@ from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 import openai
 from openai import OpenAI
+
+# Remotion интеграция
+try:
+    from remotion import render_media, Composition, Video, Sequence, AbsoluteFill, static_file
+    from remotion import interpolate, useCurrentFrame, useVideoConfig
+    REMOTION_AVAILABLE = True
+except ImportError:
+    REMOTION_AVAILABLE = False
+    logger = logging.getLogger("app")
+    logger.warning("⚠️ Remotion не установлен")
 
 # Supabase Storage интеграция (опционально)
 try:
@@ -36,8 +47,8 @@ logger = logging.getLogger("app")
 # Инициализация FastAPI
 app = FastAPI(
     title="AgentFlow AI Clips API",
-    description="Система генерации клипов с WebVTT субтитрами и анимацией",
-    version="18.5.5"
+    description="Система генерации клипов с анимированными субтитрами через Remotion",
+    version="18.5.6"
 )
 
 # CORS настройки
@@ -54,13 +65,15 @@ class Config:
     UPLOAD_DIR = "uploads"
     AUDIO_DIR = "audio"
     CLIPS_DIR = "clips"
-    SUBTITLE_DIR = "subtitles"
+    REMOTION_DIR = "remotion"
     MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
     CLEANUP_INTERVAL = 3600  # Очистка каждый час
+    FPS = 30  # FPS для Remotion
+    DURATION = 60  # Максимальная длительность клипа в секундах (настраиваемо)
 
 # Создание необходимых папок
-for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.SUBTITLE_DIR]:
+for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.REMOTION_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 # Глобальные переменные
@@ -293,96 +306,107 @@ def get_crop_parameters(width: int, height: int, format_type: str) -> dict:
         "crop": f"{target['target_width']}:{target['target_height']}:{crop_x}:{crop_y}"
     }
 
-def generate_webvtt_subtitles(words: List[Dict], clip_start: float, clip_end: float) -> str:
-    """Генерация WebVTT файла с таймкодами"""
-    vtt_content = "WEBVTT\n\n"
-    for i, word_data in enumerate(words, 1):
-        start = max(0, word_data["start"] - clip_start)
-        end = min(clip_end - clip_start, word_data["end"] - clip_start)
-        if start >= clip_end - clip_start or end <= 0:
-            continue
-        start_time = f"{int(start//3600):02d}:{int((start%3600)//60):02d}:{int(start%60):02d}.{int((start%1)*1000):03d}"
-        end_time = f"{int(end//3600):02d}:{int((end%3600)//60):02d}:{int(end%60):02d}.{int((end%1)*1000):03d}"
-        vtt_content += f"{i}\n{start_time} --> {end_time}\n{word_data['word']}\n\n"
-    return vtt_content
+# Remotion компоненты
+def SubtitleAnimation(words: List[Dict], clip_duration: float):
+    frame = useCurrentFrame()
+    config = useVideoConfig()
+    fps = config.fps
 
-def create_clip_with_webvtt_subtitles(video_path: str, start_time: float, end_time: float, words_data: List[Dict], output_path: str, format_type: str = "9:16") -> bool:
-    """Создание клипа с наложением WebVTT субтитров"""
+    return (
+        <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', backgroundColor: 'transparent' }}>
+            {words.map((word, index) => {
+                const start_frame = Math.floor(word.start * fps)
+                const end_frame = Math.floor(word.end * fps)
+                const opacity = interpolate(frame, [start_frame, start_frame + 5, end_frame - 5, end_frame], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+                const scale = interpolate(frame, [start_frame, start_frame + 5, end_frame - 5, end_frame], [0.8, 1, 1, 0.8], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+                const color = frame >= start_frame && frame < end_frame ? '#ffd700' : '#fff'
+
+                return (
+                    <span
+                        key={index}
+                        style={{
+                            opacity,
+                            transform: `scale(${scale})`,
+                            color,
+                            fontSize: '40px',
+                            fontFamily: 'Arial',
+                            margin: '0 5px',
+                            textShadow: frame >= start_frame && frame < end_frame ? '0 0 10px #ffd700' : 'none',
+                            transition: 'all 0.2s ease',
+                        }}
+                    >
+                        {word.word}
+                    </span>
+                )
+            })}
+        </AbsoluteFill>
+    )
+
+def MyVideoComp(props):
+    return (
+        <Composition
+            id="MyVideo"
+            component={VideoComponent}
+            durationInFrames={props.duration * Config.FPS}
+            fps={Config.FPS}
+            width={1280}
+            height={720}
+            defaultProps={props}
+        />
+    )
+
+def VideoComponent(props):
+    const { video_path, words, duration } = props
+    return (
+        <Sequence>
+            <Video src={static_file(video_path)} />
+            <SubtitleAnimation words={words} clip_duration={duration} />
+        </Sequence>
+    )
+
+# Рендер клипа с Remotion
+def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: float, end_time: float, output_path: str, format_type: str) -> bool:
+    if not REMOTION_AVAILABLE:
+        logger.error("❌ Remotion не установлен")
+        return False
     try:
-        logger.info(f"🎬 Начинаем создание клипа с WebVTT субтитрами")
-        logger.info(f"📊 Параметры: {start_time}-{end_time}s, формат {format_type}")
-
+        logger.info(f"🎬 Начинаем рендер клипа с Remotion: {start_time}-{end_time}s")
         crop_params = get_crop_parameters(1920, 1080, format_type)
-        if not crop_params:
-            logger.error(f"❌ Неподдерживаемый формат: {format_type}")
-            return False
-
-        clip_words = []
-        logger.info(f"🔍 Фильтруем слова для клипа {start_time}s-{end_time}s из {len(words_data)} общих слов")
-        for word_data in words_data:
-            word_start = word_data.get('start', 0)
-            word_end = word_data.get('end', 0)
+        clip_duration = end_time - start_time
+        adjusted_words = []
+        for word in words:
+            word_start = word.get('start', 0)
+            word_end = word.get('end', 0)
             if word_start < end_time and word_end >= start_time:
-                clip_word_start = max(0, word_start - start_time)
-                clip_word_end = min(end_time - start_time, word_end - start_time)
-                if clip_word_end > clip_word_start:
-                    clip_words.append({
-                        'word': word_data.get('word', word_data.get('text', '')),
-                        'start': clip_word_start,
-                        'end': clip_word_end
-                    })
-                    logger.debug(f"✅ Слово '{word_data.get('word', word_data.get('text', ''))}' добавлено: {clip_word_start:.1f}s-{clip_word_end:.1f}s")
+                adjusted_words.append({
+                    'word': word.get('word', word.get('text', '')),
+                    'start': max(0, word_start - start_time),
+                    'end': min(clip_duration, word_end - start_time)
+                })
 
-        logger.info(f"📝 Найдено {len(clip_words)} слов для субтитров")
-        temp_video_path = output_path.replace('.mp4', '_temp.mp4')
-        vtt_path = os.path.join(Config.SUBTITLE_DIR, f"{os.path.basename(output_path).replace('.mp4', '.vtt')}")
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # Настройка Remotion
+        remotion_config = {
+            'component': MyVideoComp,
+            'inputProps': {
+                'video_path': video_path,
+                'words': adjusted_words,
+                'duration': clip_duration
+            },
+            'defaultProps': {
+                'width': int(crop_params['crop'].split(':')[0]),
+                'height': int(crop_params['crop'].split(':')[1]),
+                'fps': Config.FPS,
+                'durationInFrames': int(clip_duration * Config.FPS)
+            },
+            'output': output_path
+        }
 
-        # ЭТАП 1: Создание базового видео
-        base_cmd = [
-            'ffmpeg', '-i', video_path,
-            '-ss', str(start_time),
-            '-t', str(end_time - start_time),
-            '-vf', f"scale={crop_params['scale']},crop={crop_params['crop']}",
-            '-c:v', 'libx264', '-preset', 'fast',
-            '-c:a', 'aac', '-b:a', '128k',
-            '-y', temp_video_path
-        ]
-        logger.info("🎬 ЭТАП 1: Создаем базовое видео...")
-        result = subprocess.run(base_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-        if result.returncode != 0:
-            logger.error(f"❌ ЭТАП 1 неудачен: {result.stderr}")
-            return False
-        logger.info("✅ ЭТАП 1 завершен")
-
-        # ЭТАП 2: Генерация и наложение WebVTT субтитров
-        if clip_words:
-            logger.info("📝 ЭТАП 2: Создаем WebVTT субтитры...")
-            vtt_content = generate_webvtt_subtitles(clip_words, start_time, end_time)
-            with open(vtt_path, 'w', encoding='utf-8') as f:
-                f.write(vtt_content)
-            subtitle_cmd = [
-                'ffmpeg', '-i', temp_video_path,
-                '-vf', f"subtitles={vtt_path}:force_style='Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=1'",
-                '-c:v', 'libx264', '-preset', 'fast',
-                '-c:a', 'copy',
-                '-y', output_path
-            ]
-            logger.info("📝 Применяем WebVTT субтитры...")
-            result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
-            if result.returncode == 0:
-                logger.info("✅ ЭТАП 2 завершен: субтитры наложены")
-                os.remove(temp_video_path)
-                os.remove(vtt_path)
-                return True
-            logger.error(f"❌ ЭТАП 2 неудачен: {result.stderr}")
-        else:
-            logger.warning("⚠️ Нет слов для субтитров")
-
-        os.rename(temp_video_path, output_path)
-        return True
+        # Рендер
+        render_media(remotion_config)
+        logger.info(f"✅ Рендер завершен: {output_path}")
+        return os.path.exists(output_path)
     except Exception as e:
-        logger.error(f"❌ Ошибка создания клипа: {e}")
+        logger.error(f"❌ Ошибка рендера с Remotion: {e}")
         return False
 
 # API Endpoints
@@ -390,7 +414,7 @@ def create_clip_with_webvtt_subtitles(video_path: str, start_time: float, end_ti
 @app.get("/")
 async def root():
     """Главная страница API"""
-    return {"message": "AgentFlow AI Clips API v18.5.5", "status": "running"}
+    return {"message": "AgentFlow AI Clips API v18.5.6", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -401,7 +425,7 @@ async def health_check():
     clip_count = len([f for f in os.listdir(Config.CLIPS_DIR) if os.path.isfile(os.path.join(Config.CLIPS_DIR, f))])
     return {
         "status": "healthy",
-        "version": "18.5.5",
+        "version": "18.5.6",
         "timestamp": datetime.now().isoformat(),
         "system": {
             "memory_usage": f"{memory.percent}%",
@@ -411,7 +435,8 @@ async def health_check():
         },
         "services": {
             "openai": "connected" if openai_api_key else "disconnected",
-            "supabase": "connected" if supabase_available else "disconnected"
+            "supabase": "connected" if supabase_available else "disconnected",
+            "remotion": "connected" if REMOTION_AVAILABLE else "disconnected"
         }
     }
 
@@ -550,7 +575,7 @@ async def get_video_status(video_id: str):
 
 @app.post("/api/clips/generate")
 async def generate_clips(request: ClipGenerationRequest, background_tasks: BackgroundTasks):
-    """Генерация клипов с WebVTT субтитрами"""
+    """Генерация клипов с анимированными субтитрами через Remotion"""
     try:
         video_id = request.video_id
         format_id = request.format_id
@@ -592,7 +617,7 @@ async def generate_clips_task(task_id: str):
         highlights = analysis_task["analysis"]["highlights"]
         transcript_data = analysis_task.get("transcript", {})
         generation_tasks[task_id]["status"] = "generating"
-        logger.info(f"🎬 Начинаю генерацию {len(highlights)} клипов")
+        logger.info(f"🎬 Начинаю генерацию {len(highlights)} клипов с Remotion")
         clips_created = 0
         total_clips = len(highlights)
         for i, highlight in enumerate(highlights):
@@ -617,8 +642,8 @@ async def generate_clips_task(task_id: str):
                 logger.info(f"📝 Найдено {len(words_in_range)} слов для субтитров в диапазоне {start_time}-{end_time}s")
                 clip_filename = f"{task_id}_clip_{i+1}_{format_id.replace(':', 'x')}.mp4"
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
-                success = create_clip_with_webvtt_subtitles(
-                    video_path, start_time, end_time, words_in_range, clip_path, format_type=format_id
+                success = render_clip_with_remotion(
+                    video_path, words_in_range, start_time, end_time, clip_path, format_type=format_id
                 )
                 if success:
                     supabase_url = upload_clip_to_supabase(clip_path, clip_filename)
@@ -694,7 +719,7 @@ async def download_clip(filename: str):
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    logger.info("🚀 AgentFlow AI Clips v18.5.5 started!")
-    logger.info("🎬 WebVTT субтитры с анимацией активированы")
-    port = int(os.getenv("PORT", 10000))  # Установлен порт 10000 для соответствия Render
+    logger.info("🚀 AgentFlow AI Clips v18.5.6 started!")
+    logger.info("🎬 Анимированные субтитры через Remotion активированы")
+    port = int(os.getenv("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
