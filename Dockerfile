@@ -1,12 +1,10 @@
-# AgentFlow AI Clips v18.3.0 - Production Dockerfile
+# AgentFlow AI Clips v18.1.1 - Production Dockerfile
 FROM python:3.11-slim
 
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libass-dev \
-    libfontconfig \
-    libfreetype6 \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание рабочей директории
@@ -32,4 +30,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
 # Команда запуска
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "app.py"]
