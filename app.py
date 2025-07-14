@@ -317,29 +317,35 @@ def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: fl
             "entryPoint": "remotion/Root.js",
             "composition": "MyVideo",
             "props": {
-                "videoPath": video_path,
+                "videoPath": os.path.abspath(video_path),  # Абсолютный путь для надежности
                 "words": adjusted_words,
-                "duration": clip_duration
+                "duration": clip_duration,
+                "width": crop_params["width"],
+                "height": crop_params["height"]
             },
-            "output": output_path,
-            "width": crop_params["width"],
-            "height": crop_params["height"],
+            "output": os.path.abspath(output_path),  # Абсолютный путь для вывода
             "fps": Config.FPS,
             "durationInFrames": int(clip_duration * Config.FPS)
         }
         with open(config_path, 'w') as f:
             json.dump(config, f)
+        logger.info(f"📄 Сгенерирован конфиг: {config_path}, содержимое: {json.dumps(config)}")
 
-        # Запуск Remotion через подпроцесс
+        # Запуск Remotion с отладкой
         cmd = [
             'npx', 'remotion', 'render',
             config_path,
             'MyVideo',
             output_path,
-            '--props', config_path
+            '--props', config_path,
+            '--log', 'verbose'  # Добавляем подробные логи
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=Config.REMOTION_DIR)
-        logger.info(f"✅ Рендер завершен: {output_path}")
+        logger.info(f"📋 Запуск команды: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=Config.REMOTION_DIR)
+        if result.returncode != 0:
+            logger.error(f"❌ Ошибка рендера с Remotion: Код ошибки {result.returncode}, stderr: {result.stderr}, stdout: {result.stdout}")
+            return False
+        logger.info(f"✅ Рендер завершен: {output_path}, stdout: {result.stdout}")
         os.remove(config_path)
         return os.path.exists(output_path)
     except Exception as e:
