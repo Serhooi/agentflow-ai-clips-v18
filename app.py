@@ -1,8 +1,8 @@
-# AgentFlow AI Clips v18.3.0 - ПОЛНАЯ ВЕРСИЯ С ОПТИМИЗАЦИЕЙ
+# AgentFlow AI Clips v18.3.0 - ПОЛНАЯ ВЕРСIA С ОПТИМИЗАЦИЕЙ
 # Разработано для генерации коротких клипов с ASS субтитрами в стиле Opus
 # Оптимизировано для Render с учетом памяти и скорости обработки
 # Адаптировано для поддержки множества пользователей с очередью задач
-# Текущая дата: 07:58 PM EDT, 13 июля 2025
+# Текущая дата: 08:42 PM EDT, 14 июля 2025
 
 import os
 import json
@@ -557,18 +557,18 @@ class ASSKaraokeSubtitleSystem:
     def __init__(self):
         self.styles = {
             "opus": {
-                "fontname": "Montserrat-Bold",  # Жирный шрифт Montserrat
-                "fontsize": 45,                # 42-48 px
-                "primarycolor": "&HFFFFFF",    # Белый текст
-                "secondarycolor": "&H00FF00",  # Зеленый цвет для активного слова
-                "outlinecolor": "&H000000",    # Черный контур
-                "backcolor": "&H80000000",     # Полупрозрачный черный (opacity ~60%)
+                "fontname": "Montserrat-Bold",
+                "fontsize": 45,
+                "primarycolor": "&HFFFFFF",
+                "secondarycolor": "&H00FF00",
+                "outlinecolor": "&H000000",
+                "backcolor": "&H80000000",
                 "outline": 2,
                 "shadow": 1,
-                "alignment": 2,                # Центрирование по горизонтали
-                "marginl": 100,                # Отступ 100 px слева
-                "marginr": 100,                # Отступ 100 px справа
-                "marginv": 1700,               # Отступ от низа (250 px от 1920)
+                "alignment": 2,
+                "marginl": 100,
+                "marginr": 100,
+                "marginv": 1700,
                 "borderstyle": 1,
                 "scalex": 100,
                 "scaley": 100,
@@ -605,8 +605,8 @@ class ASSKaraokeSubtitleSystem:
         ass_content = "[Script Info]\n"
         ass_content += "Title: AgentFlow AI Clips Opus Subtitles\n"
         ass_content += "ScriptType: v4.00+\n"
-        ass_content += "WrapStyle: 2\n"  # Поддержка двух строк
-        ass_content += "PlayResX: 1080\n"  # Разрешение 1080x1920
+        ass_content += "WrapStyle: 2\n"
+        ass_content += "PlayResX: 1080\n"
         ass_content += "PlayResY: 1920\n"
         ass_content += "ScaledBorderAndShadow: yes\n"
         ass_content += "YCbCr Matrix: TV.709\n\n"
@@ -683,7 +683,6 @@ class ASSKaraokeSubtitleSystem:
             start_time = max(0, word_data['start'])
             end_time = min(word_data['end'], words[-1]['end'] if i == len(words) - 1 else words[i + 1]['start'])
             duration = max(50, min(500, int((end_time - start_time) * 1000)))
-            # Исправлено: экранирование через конкатенацию вместо f-строки с \
             effect_str = f"{{t({int(start_time*1000)},{int(end_time*1000)},fs{int(45*1.1)},c&H00FF00&)}}"
             text_parts.append(effect_str + word + "{r}")
             if i < len(words) - 1:
@@ -718,8 +717,8 @@ def create_clip_with_ass_subtitles(
             logger.warning(f"⚠️ Формат {format_type} не поддерживается, используется 9:16")
         
         crop_params = {
-            "scale": "1080:1920",  # Точное разрешение 1080x1920
-            "crop": "1080:1920:0:0"  # Без обрезки
+            "scale": "1080:1920",
+            "crop": "1080:1920:0:0"
         }
         
         clip_words = []
@@ -1109,10 +1108,10 @@ async def download_clip(filename: str):
         file_path,
         media_type="video/mp4",
         filename=filename
-   )
+    )
 
 # Дополнительная утилита для очистки старых файлов
-def cleanup_old_files():
+async def cleanup_old_files():
     """Удаление старых файлов из директорий"""
     current_time = datetime.now()
     for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.ASS_DIR]:
@@ -1129,17 +1128,22 @@ async def cleanup_scheduler():
     """Планировщик периодической очистки файлов"""
     while True:
         await asyncio.sleep(Config.CLEANUP_INTERVAL)
-        cleanup_old_files()
+        await cleanup_old_files()
         logger.info("🕒 Выполнена периодическая очистка старых файлов")
 
-# Запуск приложения с подробной информацией
-if __name__ == "__main__":
-    import uvicorn
+# Запуск планировщика при старте приложения
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация при запуске приложения"""
     logger.info("🚀 AgentFlow AI Clips v18.3.0 успешно запущен!")
     logger.info("🎬 Система ASS субтитров активирована с поддержкой Montserrat-Bold")
     logger.info("🔥 GPU-ускорение через libass (если доступно)")
     logger.info("⚡ Двухэтапная генерация клипов с оптимизацией")
     logger.info("🕒 Запущен планировщик очистки файлов")
-    port = int(os.getenv("PORT", 10000))
     asyncio.create_task(cleanup_scheduler())
+
+# Запуск приложения с подробной информацией
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
