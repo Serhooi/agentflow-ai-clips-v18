@@ -314,31 +314,24 @@ def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: fl
         # Генерация конфига для Remotion
         config_path = os.path.join(Config.REMOTION_DIR, f"config_{uuid.uuid4()}.json")
         config = {
-            "entryPoint": "remotion/Root.js",
-            "composition": "MyVideo",
-            "props": {
-                "videoPath": os.path.abspath(video_path),  # Абсолютный путь для надежности
-                "words": adjusted_words,
-                "duration": clip_duration,
-                "width": crop_params["width"],
-                "height": crop_params["height"]
-            },
-            "output": os.path.abspath(output_path),  # Абсолютный путь для вывода
-            "fps": Config.FPS,
-            "durationInFrames": int(clip_duration * Config.FPS)
+            "videoPath": os.path.abspath(video_path),
+            "words": adjusted_words,
+            "duration": clip_duration,
+            "width": crop_params["width"],
+            "height": crop_params["height"]
         }
         with open(config_path, 'w') as f:
             json.dump(config, f)
         logger.info(f"📄 Сгенерирован конфиг: {config_path}, содержимое: {json.dumps(config)}")
 
-        # Запуск Remotion с отладкой
+        # Запуск Remotion с правильным entry point
         cmd = [
             'npx', 'remotion', 'render',
-            config_path,
-            'MyVideo',
+            os.path.join(Config.REMOTION_DIR, "Root.js"),  # Прямой путь к Root.js
+            'MyVideo',  # Имя композиции
             output_path,
             '--props', config_path,
-            '--log', 'verbose'  # Добавляем подробные логи
+            '--log', 'verbose'  # Подробные логи
         ]
         logger.info(f"📋 Запуск команды: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=Config.REMOTION_DIR)
