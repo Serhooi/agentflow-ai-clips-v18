@@ -18,9 +18,8 @@ COPY requirements.txt .
 # Установка Python зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копирование кода приложения и шрифтов
+# Копирование кода приложения
 COPY . .
-COPY ass_subtitles/fonts/ ass_subtitles/fonts/
 
 # Создание необходимых директорий
 RUN mkdir -p uploads audio clips ass_subtitles
