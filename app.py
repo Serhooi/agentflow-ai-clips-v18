@@ -18,16 +18,6 @@ from pydantic import BaseModel
 import openai
 from openai import OpenAI
 
-# Remotion интеграция
-try:
-    from remotion import render_media, Composition, Video, Sequence, AbsoluteFill, static_file
-    from remotion import interpolate, useCurrentFrame, useVideoConfig
-    REMOTION_AVAILABLE = True
-except ImportError:
-    REMOTION_AVAILABLE = False
-    logger = logging.getLogger("app")
-    logger.warning("⚠️ Remotion не установлен")
-
 # Supabase Storage интеграция (опционально)
 try:
     from supabase import create_client, Client
@@ -70,7 +60,6 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
     CLEANUP_INTERVAL = 3600  # Очистка каждый час
     FPS = 30  # FPS для Remotion
-    DURATION = 60  # Максимальная длительность клипа в секундах (настраиваемо)
 
 # Создание необходимых папок
 for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.REMOTION_DIR]:
@@ -302,73 +291,11 @@ def get_crop_parameters(width: int, height: int, format_type: str) -> dict:
     crop_x = (new_width - target["target_width"]) // 2
     crop_y = (new_height - target["target_height"]) // 2
     return {
-        "scale": f"{new_width}:{new_height}",
-        "crop": f"{target['target_width']}:{target['target_height']}:{crop_x}:{crop_y}"
+        "width": target["target_width"],
+        "height": target["target_height"]
     }
 
-# Remotion компоненты
-def SubtitleAnimation(words: List[Dict], clip_duration: float):
-    frame = useCurrentFrame()
-    config = useVideoConfig()
-    fps = config.fps
-
-    return (
-        <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', backgroundColor: 'transparent' }}>
-            {words.map((word, index) => {
-                const start_frame = Math.floor(word.start * fps)
-                const end_frame = Math.floor(word.end * fps)
-                const opacity = interpolate(frame, [start_frame, start_frame + 5, end_frame - 5, end_frame], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
-                const scale = interpolate(frame, [start_frame, start_frame + 5, end_frame - 5, end_frame], [0.8, 1, 1, 0.8], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
-                const color = frame >= start_frame && frame < end_frame ? '#ffd700' : '#fff'
-
-                return (
-                    <span
-                        key={index}
-                        style={{
-                            opacity,
-                            transform: `scale(${scale})`,
-                            color,
-                            fontSize: '40px',
-                            fontFamily: 'Arial',
-                            margin: '0 5px',
-                            textShadow: frame >= start_frame && frame < end_frame ? '0 0 10px #ffd700' : 'none',
-                            transition: 'all 0.2s ease',
-                        }}
-                    >
-                        {word.word}
-                    </span>
-                )
-            })}
-        </AbsoluteFill>
-    )
-
-def MyVideoComp(props):
-    return (
-        <Composition
-            id="MyVideo"
-            component={VideoComponent}
-            durationInFrames={props.duration * Config.FPS}
-            fps={Config.FPS}
-            width={1280}
-            height={720}
-            defaultProps={props}
-        />
-    )
-
-def VideoComponent(props):
-    const { video_path, words, duration } = props
-    return (
-        <Sequence>
-            <Video src={static_file(video_path)} />
-            <SubtitleAnimation words={words} clip_duration={duration} />
-        </Sequence>
-    )
-
-# Рендер клипа с Remotion
 def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: float, end_time: float, output_path: str, format_type: str) -> bool:
-    if not REMOTION_AVAILABLE:
-        logger.error("❌ Remotion не установлен")
-        return False
     try:
         logger.info(f"🎬 Начинаем рендер клипа с Remotion: {start_time}-{end_time}s")
         crop_params = get_crop_parameters(1920, 1080, format_type)
@@ -384,26 +311,36 @@ def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: fl
                     'end': min(clip_duration, word_end - start_time)
                 })
 
-        # Настройка Remotion
-        remotion_config = {
-            'component': MyVideoComp,
-            'inputProps': {
-                'video_path': video_path,
-                'words': adjusted_words,
-                'duration': clip_duration
+        # Генерация конфига для Remotion
+        config_path = os.path.join(Config.REMOTION_DIR, f"config_{uuid.uuid4()}.json")
+        config = {
+            "entryPoint": "remotion/Root.js",
+            "composition": "MyVideo",
+            "props": {
+                "videoPath": video_path,
+                "words": adjusted_words,
+                "duration": clip_duration
             },
-            'defaultProps': {
-                'width': int(crop_params['crop'].split(':')[0]),
-                'height': int(crop_params['crop'].split(':')[1]),
-                'fps': Config.FPS,
-                'durationInFrames': int(clip_duration * Config.FPS)
-            },
-            'output': output_path
+            "output": output_path,
+            "width": crop_params["width"],
+            "height": crop_params["height"],
+            "fps": Config.FPS,
+            "durationInFrames": int(clip_duration * Config.FPS)
         }
+        with open(config_path, 'w') as f:
+            json.dump(config, f)
 
-        # Рендер
-        render_media(remotion_config)
+        # Запуск Remotion через подпроцесс
+        cmd = [
+            'npx', 'remotion', 'render',
+            config_path,
+            'MyVideo',
+            output_path,
+            '--props', config_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=Config.REMOTION_DIR)
         logger.info(f"✅ Рендер завершен: {output_path}")
+        os.remove(config_path)
         return os.path.exists(output_path)
     except Exception as e:
         logger.error(f"❌ Ошибка рендера с Remotion: {e}")
@@ -435,8 +372,7 @@ async def health_check():
         },
         "services": {
             "openai": "connected" if openai_api_key else "disconnected",
-            "supabase": "connected" if supabase_available else "disconnected",
-            "remotion": "connected" if REMOTION_AVAILABLE else "disconnected"
+            "supabase": "connected" if supabase_available else "disconnected"
         }
     }
 
