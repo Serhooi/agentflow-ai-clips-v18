@@ -1,7 +1,7 @@
-# AgentFlow AI Clips v18.4.1 - Полная версия с деталями
+# AgentFlow AI Clips v18.4.2 - Полная версия с исправленной поддержкой Supabase
 # Система генерации коротких видео клипов с ASS-субтитрами в формате 1080x1920
 # Оптимизирована для Render с поддержкой стиля Opus
-# Текущая дата и время: 10:15 PM EDT, 13 июля 2025 (воскресенье)
+# Текущая дата и время: 10:37 PM EDT, 13 июля 2025 (воскресенье)
 
 import os
 import json
@@ -28,8 +28,9 @@ try:
     from pydantic import BaseModel
     import openai
     from openai import OpenAI
+    from supabase import create_client, Client  # Исправлен импорт Supabase
 except ImportError as e:
-    print(f"Ошибка импорта модулей: {str(e)}. Убедитесь, что установлены все зависимости.")
+    print(f"Ошибка импорта модулей: {str(e)}. Убедитесь, что установлены все зависимости (fastapi, uvicorn, openai, supabase-py, psutil).")
     sys.exit(1)
 
 # Настройка детального логирования
@@ -44,8 +45,8 @@ logger.info("Инициализация системы логирования з
 # Инициализация FastAPI с полной конфигурацией
 app = FastAPI(
     title="AgentFlow AI Clips API",
-    description="Генерация клипов с ASS-субтитрами в стиле Opus (1080x1920). Версия 18.4.1.",
-    version="18.4.1",
+    description="Генерация клипов с ASS-субтитрами в стиле Opus (1080x1920). Версия 18.4.2.",
+    version="18.4.2",
     contact={"name": "Support Team", "email": "support@x.ai", "url": "https://x.ai/support"},
     license_info={"name": "MIT License", "url": "https://opensource.org/licenses/MIT"}
 )
@@ -117,8 +118,8 @@ client = OpenAI(api_key=openai_api_key)
 logger.info("Клиент OpenAI успешно инициализирован")
 
 # Инициализация Supabase
-supabase = None
-service_supabase = None
+supabase: Client = None
+service_supabase: Client = None
 SUPABASE_BUCKET = "video-results"
 
 def init_supabase() -> bool:
@@ -446,7 +447,7 @@ def check_memory_available() -> bool:
 async def root():
     """Основной эндпоинт для проверки статуса"""
     logger.info("Запрос на корневой эндпоинт")
-    return {"message": "AgentFlow AI Clips v18.4.1", "status": "running", "timestamp": datetime.now().isoformat()}
+    return {"message": "AgentFlow AI Clips v18.4.2", "status": "running", "timestamp": datetime.now().isoformat()}
 
 @app.get("/health")
 async def health_check():
@@ -456,7 +457,7 @@ async def health_check():
     disk = psutil.disk_usage('/')
     return {
         "status": "healthy",
-        "version": "18.4.1",
+        "version": "18.4.2",
         "timestamp": datetime.now().isoformat(),
         "memory_usage": f"{memory.percent}% ({memory.available / (1024 * 1024):.1f} MB доступно)",
         "disk_usage": f"{disk.percent}%"
@@ -723,7 +724,7 @@ def cleanup_old_tasks():
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Запуск AgentFlow AI Clips v18.4.1")
+    logger.info("Запуск AgentFlow AI Clips v18.4.2")
     logger.info("Система готова к работе с субтитрами в стиле Opus")
     logger.info("GPU-ускорение доступно при наличии h264_nvenc")
     port = int(os.getenv("PORT", 10000))
