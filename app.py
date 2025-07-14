@@ -1,6 +1,6 @@
 # AgentFlow AI Clips v18.3.0 - ВОССТАНОВЛЕННАЯ РАБОЧАЯ ВЕРСИЯ
-# Улучшенный анализ для 3-5 клипов + исправление Supabase
-# Текущая дата и время: 10:39 PM EDT, 13 июля 2025 (воскресенье)
+# Улучшенный анализ для 3-5 клипов + исправление Supabase + поддержка шрифта Montserrat Bold
+# Текущая дата и время: 11:07 PM EDT, 13 июля 2025 (воскресенье)
 
 import os
 import json
@@ -73,11 +73,11 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
     CLEANUP_INTERVAL = 3600      # Очистка каждый час
     
-    # ASS стили для караоке
+    # ASS стили для караоке с поддержкой Montserrat Bold
     ASS_STYLES = {
         "modern": {
             "name": "Modern",
-            "fontname": "Montserrat",
+            "fontname": "/app/ass_subtitles/fonts/Montserrat-Bold",
             "fontsize": 16,
             "primarycolor": "&Hffffff",  # Белый текст
             "secondarycolor": "&H00ff00",  # Зеленая подсветка караоке
@@ -103,7 +103,7 @@ class Config:
         },
         "neon": {
             "name": "Neon",
-            "fontname": "Arial",
+            "fontname": "/app/ass_subtitles/fonts/Montserrat-Bold",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
             "secondarycolor": "&Hff00ff",  # Пурпурная подсветка
@@ -129,7 +129,7 @@ class Config:
         },
         "fire": {
             "name": "Fire",
-            "fontname": "Impact",
+            "fontname": "/app/ass_subtitles/fonts/Montserrat-Bold",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
             "secondarycolor": "&Hff8000",  # Оранжевая подсветка
@@ -155,7 +155,7 @@ class Config:
         },
         "elegant": {
             "name": "Elegant",
-            "fontname": "Georgia",
+            "fontname": "/app/ass_subtitles/fonts/Montserrat-Bold",
             "fontsize": 16,
             "primarycolor": "&Hffffff",
             "secondarycolor": "&Hffff00",  # Желтая подсветка
@@ -504,7 +504,7 @@ def create_clip_with_ass_subtitles(
             logger.error(f"❌ Неподдерживаемый формат: {format_type}")
             return False
         
-        # Фильтруем слова для данного временного отрезка (любое пересечение)
+        # Фильтруем слова для данного временного отрезка
         clip_words = []
         logger.info(f"🔍 Фильтруем слова для клипа {start_time}s-{end_time}s из {len(words_data)} общих слов")
         
@@ -512,13 +512,12 @@ def create_clip_with_ass_subtitles(
             word_start = word_data.get('start', 0)
             word_end = word_data.get('end', 0)
             
-            # Проверяем пересечение с интервалом клипа
             if word_end > start_time and word_start < end_time:
                 clip_word_start = max(0, word_start - start_time)
                 clip_word_end = min(end_time - start_time, word_end - start_time)
                 if clip_word_end > clip_word_start:
                     clip_words.append({
-                        'text': word_data.get('word', ''),  # Совместимость с ShortGPT
+                        'text': word_data.get('word', ''),
                         'start': clip_word_start,
                         'end': clip_word_end
                     })
@@ -548,19 +547,22 @@ def create_clip_with_ass_subtitles(
         
         logger.info("✅ ЭТАП 1 завершен: базовое видео создано")
         
-        # ЭТАП 2: Накладываем субтитры (подход ShortGPT)
+        # ЭТАП 2: Накладываем субтитры
         if clip_words:
             try:
-                logger.info("📝 ЭТАП 2: Создаем простые субтитры (ShortGPT подход)...")
+                logger.info("📝 ЭТАП 2: Создаем субтитры (ShortGPT подход)...")
                 
                 # Создаем transcript_data в формате ShortGPT
                 transcript_data = {
                     'segments': [{'words': clip_words}]
                 }
                 
-                # Генерация субтитров
+                # Генерация субтитров с подсветкой
                 subtitle_segments = create_word_level_subtitles(transcript_data, max_caption_size=25)
                 logger.info(f"📝 Создано {len(subtitle_segments)} групп субтитров")
+                
+                if not subtitle_segments:
+                    logger.warning("⚠️ Сегменты субтитров пусты, подсветка может отсутствовать")
                 
                 # Создаем фильтр субтитров
                 subtitle_filter = create_simple_subtitle_filter(subtitle_segments, style)
@@ -574,11 +576,11 @@ def create_clip_with_ass_subtitles(
                         '-y', output_path
                     ]
                     
-                    logger.info("📝 Применяем субтитры...")
+                    logger.info("📝 Применяем субтитры с подсветкой...")
                     result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
                     
                     if result.returncode == 0:
-                        logger.info("✅ ЭТАП 2 завершен: субтитры наложены")
+                        logger.info("✅ ЭТАП 2 завершен: субтитры с подсветкой наложены")
                         if os.path.exists(temp_video_path):
                             os.remove(temp_video_path)
                         return True
@@ -588,7 +590,7 @@ def create_clip_with_ass_subtitles(
                             os.rename(temp_video_path, output_path)
                         return True
                 else:
-                    logger.warning("⚠️ Не удалось создать фильтр субтитров")
+                    logger.warning("⚠️ Не удалось создать фильтр субтитров, используется видео без субтитров")
                     if os.path.exists(temp_video_path):
                         os.rename(temp_video_path, output_path)
                     return True
@@ -1072,7 +1074,7 @@ async def download_clip(filename: str):
         file_path,
         media_type="video/mp4",
         filename=filename
-   )
+    )
 
 # Запуск приложения
 if __name__ == "__main__":
