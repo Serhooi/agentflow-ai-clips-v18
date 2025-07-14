@@ -1,0 +1,15 @@
+{
+  "name": "remotion-project",
+  "version": "1.0.0",
+  "main": "Root.js",
+  "scripts": {
+    "start": "remotion preview",
+    "build": "remotion render"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "@remotion/renderer": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}
