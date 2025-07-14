@@ -1,6 +1,4 @@
-# AgentFlow AI Clips v18.3.0 - ВОССТАНОВЛЕННАЯ РАБОЧАЯ ВЕРСИЯ
-# Улучшенный анализ для 3-5 клипов + исправление Supabase
-
+# AgentFlow AI Clips v18.4.0 - Исправленная версия с белыми субтитрами и подсветкой
 import os
 import json
 import uuid
@@ -42,7 +40,7 @@ logger = logging.getLogger("app")
 app = FastAPI(
     title="AgentFlow AI Clips API",
     description="Профессиональная система генерации коротких клипов с ASS караоке-субтитрами",
-    version="18.3.0"
+    version="18.4.0"
 )
 
 # CORS настройки
@@ -66,89 +64,11 @@ class Config:
     ASS_STYLES = {
         "modern": {
             "name": "Modern",
-            "fontname": "Montserrat",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&H00ff00",
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 1,
-            "shadow": 0,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#00ff00", "#000000"]
-        },
-        "neon": {
-            "name": "Neon",
             "fontname": "Arial",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff00ff",
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 2,
-            "shadow": 0,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff00ff", "#000000"]
-        },
-        "fire": {
-            "name": "Fire",
-            "fontname": "Impact",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hff8000",
-            "outlinecolor": "&H000000",
-            "backcolor": "&H80000000",
-            "bold": -1,
-            "italic": 0,
-            "underline": 0,
-            "strikeout": 0,
-            "scalex": 100,
-            "scaley": 100,
-            "spacing": 0,
-            "angle": 0,
-            "borderstyle": 1,
-            "outline": 2,
-            "shadow": 1,
-            "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
-            "encoding": 1,
-            "preview_colors": ["#ffffff", "#ff8000", "#000000"]
-        },
-        "elegant": {
-            "name": "Elegant",
-            "fontname": "Georgia",
-            "fontsize": 16,
-            "primarycolor": "&Hffffff",
-            "secondarycolor": "&Hffff00",
-            "outlinecolor": "&H000000",
+            "fontsize": 28,
+            "primarycolor": "&H00FFFFFF",  # Белый текст
+            "secondarycolor": "&H0000FF00",  # Зелёная подсветка
+            "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
             "bold": 0,
             "italic": 0,
@@ -162,11 +82,11 @@ class Config:
             "outline": 1,
             "shadow": 0,
             "alignment": 2,
-            "marginl": 10,
-            "marginr": 10,
-            "marginv": 60,
+            "marginl": 30,
+            "marginr": 30,
+            "marginv": 30,
             "encoding": 1,
-            "preview_colors": ["#ffffff", "#ffff00", "#000000"]
+            "preview_colors": ["#FFFFFF", "#00FF00", "#000000"]
         }
     }
 
@@ -299,11 +219,11 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
         return None
 
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
-    """Улучшенный анализ транскрипта с ChatGPT для получения 3-5 клипов"""
+    """Анализ транскрипта для получения 3-5 клипов"""
     try:
         target_clips = 2 if video_duration <= 30 else 3 if video_duration <= 60 else 4 if video_duration <= 120 else 5
         prompt = f"""
-Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных и разнообразных моментов для коротких клипов.
+Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных моментов для коротких клипов.
 
 Транскрипт: {transcript_text}
 
@@ -324,18 +244,9 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
             "title": "Интересный заголовок",
             "description": "Краткое описание содержания",
             "keywords": ["ключевое", "слово"]
-        }},
-        {{
-            "start_time": 20,
-            "end_time": 38,
-            "title": "Второй момент",
-            "description": "Описание второго клипа",
-            "keywords": ["другие", "слова"]
         }}
     ]
 }}
-
-ВАЖНО: Отвечай ТОЛЬКО JSON, без дополнительного текста!
 """
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -394,64 +305,28 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
         })
     return {"highlights": highlights}
 
-# Революционная система субтитров с ASS-форматом и караоке-эффектом
+# Система субтитров с ASS и караоке-эффектом
 class ASSKaraokeSubtitleSystem:
-    """Революционная система субтитров с ASS-форматом и караоке-эффектом"""
+    """Система субтитров с ASS-форматом и караоке-эффектом"""
     
     def __init__(self):
         self.styles = {
             "modern": {
                 "fontname": "Arial",
-                "fontsize": 48,
-                "primarycolor": "&H00FFFFFF",
-                "secondarycolor": "&H000000FF", 
+                "fontsize": 28,
+                "primarycolor": "&H00FFFFFF",  # Белый текст
+                "secondarycolor": "&H0000FF00",  # Зелёная подсветка
                 "outlinecolor": "&H00000000",
                 "backcolor": "&H80000000",
-                "outline": 2,
+                "outline": 1,
                 "shadow": 0,
                 "alignment": 2,
-                "marginv": 60
-            },
-            "neon": {
-                "fontname": "Arial",
-                "fontsize": 52,
-                "primarycolor": "&H0000FFFF",
-                "secondarycolor": "&H00FF00FF",
-                "outlinecolor": "&H00000000", 
-                "backcolor": "&H80000000",
-                "outline": 3,
-                "shadow": 2,
-                "alignment": 2,
-                "marginv": 60
-            },
-            "fire": {
-                "fontname": "Arial",
-                "fontsize": 50,
-                "primarycolor": "&H0000AAFF",
-                "secondarycolor": "&H000080FF",
-                "outlinecolor": "&H00000000",
-                "backcolor": "&H80000000", 
-                "outline": 2,
-                "shadow": 1,
-                "alignment": 2,
-                "marginv": 60
-            },
-            "elegant": {
-                "fontname": "Arial",
-                "fontsize": 46,
-                "primarycolor": "&H00FFFF00",
-                "secondarycolor": "&H00FFFF80",
-                "outlinecolor": "&H00000000",
-                "backcolor": "&H80000000",
-                "outline": 2,
-                "shadow": 0,
-                "alignment": 2,
-                "marginv": 60
+                "marginv": 30
             }
         }
         
     def generate_ass_file(self, words_data: List[Dict], style: str = "modern", video_duration: float = 10.0) -> str:
-        """Генерирует ASS файл с караоке-эффектом для подсветки слов"""
+        """Генерирует ASS файл с караоке-эффектом"""
         try:
             style_config = self.styles.get(style, self.styles["modern"])
             ass_filename = f"subtitles_{uuid.uuid4().hex[:8]}.ass"
@@ -467,7 +342,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},1,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},{style_config['alignment']},10,10,{style_config['marginv']},1
+Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},0,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},{style_config['alignment']},30,30,{style_config['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -488,13 +363,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.error(f"❌ Ошибка создания ASS файла: {e}")
             raise
     
-    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 4) -> List[Dict]:
-        """Группирует слова в фразы для оптимального отображения"""
+    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 5) -> List[Dict]:
+        """Группирует слова в фразы"""
         phrases = []
         current_phrase = []
         for word_data in words_data:
             current_phrase.append(word_data)
-            if len(current_phrase) >= max_words_per_phrase or word_data['word'].endswith(('.', '!', '?', ',')):
+            if len(current_phrase) >= max_words_per_phrase or word_data['word'].endswith(('.', '!', '?')):
                 if current_phrase:
                     phrases.append({
                         'words': current_phrase.copy(),
@@ -511,14 +386,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return phrases
     
     def _create_karaoke_effect(self, words: List[Dict]) -> str:
-        """Создает караоке-эффект для списка слов"""
+        """Создаёт караоке-эффект"""
         karaoke_parts = []
+        total_duration = max(0.1, words[-1]['end'] - words[0]['start']) if words else 1.0
         for i, word_data in enumerate(words):
             word = word_data['word'].strip()
             if not word:
                 continue
-            duration = max(50, min(500, int((word_data['end'] - word_data['start']) * 100)))
-            karaoke_parts.append(f"{{\\kf{duration}}}{word}")
+            word_duration = word_data['end'] - word_data['start']
+            duration_ms = max(50, int((word_duration / total_duration) * 1000))
+            karaoke_parts.append(f"{{\kf{duration_ms}}}{word}")
             if i < len(words) - 1:
                 karaoke_parts.append(" ")
         return "".join(karaoke_parts)
@@ -543,7 +420,7 @@ def create_clip_with_ass_subtitles(
     style: str = "modern"
 ) -> bool:
     """
-    Создает клип с ASS субтитрами (двухэтапный процесс)
+    Создаёт клип с ASS субтитрами
     """
     try:
         logger.info(f"🎬 Начинаем создание клипа с ASS субтитрами")
@@ -560,7 +437,7 @@ def create_clip_with_ass_subtitles(
         for word_data in words_data:
             word_start = word_data.get('start', 0)
             word_end = word_data.get('end', 0)
-            if word_start < end_time and word_end > start_time:
+            if word_start < end_time and word_end >= start_time:  # Исправленная логика пересечения
                 clip_word_start = max(0, word_start - start_time)
                 clip_word_end = min(end_time - start_time, word_end - start_time)
                 if clip_word_end > clip_word_start:
@@ -659,7 +536,7 @@ def get_crop_parameters(width: int, height: int, format_type: str) -> Optional[D
 @app.get("/")
 async def root():
     """Главная страница API"""
-    return {"message": "AgentFlow AI Clips API v18.3.0", "status": "running"}
+    return {"message": "AgentFlow AI Clips API v18.4.0", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -670,7 +547,7 @@ async def health_check():
     clip_count = len([f for f in os.listdir(Config.CLIPS_DIR) if os.path.isfile(os.path.join(Config.CLIPS_DIR, f))])
     return {
         "status": "healthy",
-        "version": "18.3.0",
+        "version": "18.4.0",
         "timestamp": datetime.now().isoformat(),
         "system": {
             "memory_usage": f"{memory.percent}%",
@@ -793,24 +670,6 @@ async def analyze_video_task(video_id: str):
             highlight["start_time"] = start_time
             highlight["end_time"] = end_time
             valid_highlights.append(highlight)
-        if not valid_highlights:
-            target_clips = 3 if video_duration <= 60 else 5
-            clip_duration = min(18, video_duration / target_clips)
-            for i in range(target_clips):
-                start = i * (clip_duration + 2)
-                end = start + clip_duration
-                if end > video_duration:
-                    end = video_duration
-                    start = max(0, end - clip_duration)
-                if start >= video_duration - 5:
-                    break
-                valid_highlights.append({
-                    "start_time": start,
-                    "end_time": end,
-                    "title": f"Клип {i+1}",
-                    "description": "Автоматически созданный клип",
-                    "keywords": []
-                })
         analysis_tasks[video_id].update({
             "status": "completed",
             "transcript": transcript_data,
@@ -911,7 +770,7 @@ async def generate_clips_task(task_id: str):
                     for word_data in transcript_data['words']:
                         word_start = word_data.get('start', 0)
                         word_end = word_data.get('end', 0)
-                        if word_start < end_time and word_end > start_time:
+                        if word_start < end_time and word_end >= start_time:
                             adjusted_word = word_data.copy()
                             adjusted_word['start'] = max(0, word_start - start_time)
                             adjusted_word['end'] = min(end_time - start_time, word_end - start_time)
@@ -998,7 +857,7 @@ async def download_clip(filename: str):
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    logger.info("🚀 AgentFlow AI Clips v18.3.0 started!")
+    logger.info("🚀 AgentFlow AI Clips v18.4.0 started!")
     logger.info("🎬 ASS караоке-система активирована")
     logger.info("🔥 GPU-ускорение через libass")
     logger.info("⚡ Двухэтапная генерация клипов")
