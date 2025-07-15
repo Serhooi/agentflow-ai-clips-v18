@@ -1,5 +1,5 @@
 import React from 'react';
-import { Composition, Video, Sequence, AbsoluteFill } from 'remotion';
+import { Composition, Video, Sequence, AbsoluteFill, registerRoot } from 'remotion';
 import { useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
 
 // Компонент для отображения одного слова с анимацией
@@ -151,27 +151,13 @@ const VideoComponent = ({ videoPath, words, duration }) => {
       />
       
       {/* Субтитры поверх видео */}
-      <SubtitleAnimation words={words} />
+      <SubtitleAnimation words={words || []} />
     </AbsoluteFill>
   );
 };
 
-// Экспорт композиции
-export const MyVideo = () => {
-  return (
-    <Composition
-      id="MyVideo"
-      component={VideoComponent}
-      durationInFrames={900} // 30 секунд при 30 FPS (будет переопределено через props)
-      fps={30}
-      width={720}
-      height={1280}
-    />
-  );
-};
-
 // Регистрация композиций (обязательно для Remotion)
-export default function Root() {
+registerRoot(() => {
   return (
     <>
       <Composition
@@ -189,5 +175,5 @@ export default function Root() {
       />
     </>
   );
-}
+});
 
