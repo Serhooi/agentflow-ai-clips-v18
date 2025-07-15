@@ -324,14 +324,15 @@ def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: fl
             json.dump(config, f)
         logger.info(f"📄 Сгенерирован конфиг: {config_path}, содержимое: {json.dumps(config)}")
 
-        # Запуск Remotion с правильным entry point
+        # Запуск Remotion с правильными параметрами
         cmd = [
             'npx', 'remotion', 'render',
-            os.path.join(Config.REMOTION_DIR, "Root.js"),  # Прямой путь к Root.js
+            'Root.js',  # Entry point (относительно REMOTION_DIR)
             'MyVideo',  # Имя композиции
-            output_path,
-            '--props', config_path,
-            '--log', 'verbose'  # Подробные логи
+            os.path.abspath(output_path),  # Абсолютный путь к выходному файлу
+            '--props', json.dumps(config),  # Передаем props как JSON строку
+            '--log', 'verbose',  # Подробные логи
+            '--overwrite'  # Перезаписывать существующие файлы
         ]
         logger.info(f"📋 Запуск команды: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=Config.REMOTION_DIR)
@@ -339,7 +340,9 @@ def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: fl
             logger.error(f"❌ Ошибка рендера с Remotion: Код ошибки {result.returncode}, stderr: {result.stderr}, stdout: {result.stdout}")
             return False
         logger.info(f"✅ Рендер завершен: {output_path}, stdout: {result.stdout}")
-        os.remove(config_path)
+        # Удаляем временный конфиг файл
+        if os.path.exists(config_path):
+            os.remove(config_path)
         return os.path.exists(output_path)
     except Exception as e:
         logger.error(f"❌ Ошибка рендера с Remotion: {e}")
