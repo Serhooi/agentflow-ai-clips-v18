@@ -274,6 +274,287 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
         })
     return {"highlights": highlights}
 
+# Модели данных
+class VideoUploadResponse(BaseModel):
+    video_id: str
+    filename: str
+    size: int
+    duration: float
+
+class AnalyzeRequest(BaseModel):
+    video_id: str
+
+class ClipGenerateRequest(BaseModel):
+    video_id: str
+    format_id: str = "9x16"  # 9x16, 16x9, 1x1, 4x5
+    style_id: str = "modern"  # modern, neon, fire, elegant
+
+class ClipDataResponse(BaseModel):
+    task_id: str
+    video_id: str
+    format_id: str
+    style_id: str
+    download_url: str
+    highlights: List[Dict]
+    transcript: List[Dict]
+    video_duration: float
+
+# API эндпоинты
+@app.post("/api/videos/upload", response_model=VideoUploadResponse)
+async def upload_video(file: UploadFile = File(...)):
+    """Загрузка видео файла"""
+    try:
+        # Проверка размера файла
+        if file.size > Config.MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="Файл слишком большой")
+        
+        # Генерация уникального ID
+        video_id = str(uuid.uuid4())
+        filename = f"{video_id}_{file.filename}"
+        file_path = os.path.join(Config.UPLOAD_DIR, filename)
+        
+        # Сохранение файла
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Получение длительности видео
+        duration = get_video_duration(file_path)
+        
+        logger.info(f"✅ Видео загружено: {filename}, размер: {file.size}, длительность: {duration}s")
+        
+        return VideoUploadResponse(
+            video_id=video_id,
+            filename=filename,
+            size=file.size,
+            duration=duration
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки видео: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/videos/analyze")
+async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTasks):
+    """Запуск анализа видео"""
+    try:
+        task_id = str(uuid.uuid4())
+        
+        # Запуск фоновой задачи анализа
+        background_tasks.add_task(analyze_video_task, task_id, request.video_id)
+        
+        # Сохранение статуса задачи
+        analysis_tasks[task_id] = {
+            "status": "processing",
+            "video_id": request.video_id,
+            "created_at": datetime.now(),
+            "progress": 0
+        }
+        
+        logger.info(f"🔍 Запущен анализ видео: {request.video_id}, task_id: {task_id}")
+        
+        return {"task_id": task_id, "status": "processing"}
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска анализа: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/videos/{video_id}/status")
+async def get_video_status(video_id: str):
+    """Получение статуса анализа видео"""
+    try:
+        # Ищем задачу по video_id
+        task = None
+        task_id = None
+        for tid, t in analysis_tasks.items():
+            if t["video_id"] == video_id:
+                task = t
+                task_id = tid
+                break
+        
+        if not task:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        return {
+            "task_id": task_id,
+            "video_id": video_id,
+            "status": task["status"],
+            "progress": task.get("progress", 0),
+            "result": task.get("result"),
+            "error": task.get("error")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения статуса: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/videos/download/{filename}")
+async def download_video(filename: str):
+    """Скачивание видео файла"""
+    try:
+        file_path = os.path.join(Config.UPLOAD_DIR, filename)
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        return FileResponse(
+            file_path,
+            media_type="video/mp4",
+            filename=filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка скачивания файла: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/clips/generate", response_model=ClipDataResponse)
+async def generate_clips_data(request: ClipGenerateRequest):
+    """Получение данных для генерации клипов на фронтенде"""
+    try:
+        # Проверяем что анализ завершен
+        task = None
+        for t in analysis_tasks.values():
+            if t["video_id"] == request.video_id and t["status"] == "completed":
+                task = t
+                break
+        
+        if not task:
+            raise HTTPException(status_code=400, detail="Анализ видео не завершен")
+        
+        result = task["result"]
+        
+        # Находим файл видео
+        video_files = [f for f in os.listdir(Config.UPLOAD_DIR) if f.startswith(request.video_id)]
+        if not video_files:
+            raise HTTPException(status_code=404, detail="Видео файл не найден")
+        
+        video_filename = video_files[0]
+        download_url = f"/api/videos/download/{video_filename}"
+        
+        # Генерируем task_id для отслеживания
+        task_id = str(uuid.uuid4())
+        
+        logger.info(f"📊 Подготовлены данные для генерации клипов: {request.video_id}")
+        
+        return ClipDataResponse(
+            task_id=task_id,
+            video_id=request.video_id,
+            format_id=request.format_id,
+            style_id=request.style_id,
+            download_url=download_url,
+            highlights=result["highlights"],
+            transcript=result["transcript"],
+            video_duration=result["video_duration"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка подготовки данных для генерации клипов: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/videos/{video_id}/export-data")
+async def get_export_data(video_id: str):
+    """Получение всех данных для экспорта (альтернативный эндпоинт)"""
+    try:
+        # Находим завершенную задачу анализа
+        task = None
+        for t in analysis_tasks.values():
+            if t["video_id"] == video_id and t["status"] == "completed":
+                task = t
+                break
+        
+        if not task:
+            raise HTTPException(status_code=400, detail="Анализ видео не завершен")
+        
+        result = task["result"]
+        
+        # Находим файл видео
+        video_files = [f for f in os.listdir(Config.UPLOAD_DIR) if f.startswith(video_id)]
+        if not video_files:
+            raise HTTPException(status_code=404, detail="Видео файл не найден")
+        
+        video_filename = video_files[0]
+        
+        return {
+            "video_id": video_id,
+            "video_filename": video_filename,
+            "download_url": f"/api/videos/download/{video_filename}",
+            "highlights": result["highlights"],
+            "transcript": result["transcript"],
+            "video_duration": result["video_duration"],
+            "analysis_completed_at": task.get("completed_at")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения данных для экспорта: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Фоновая задача анализа видео
+async def analyze_video_task(task_id: str, video_id: str):
+    """Фоновая задача анализа видео"""
+    try:
+        logger.info(f"🔍 Начат анализ видео: {video_id}")
+        
+        # Обновляем прогресс
+        analysis_tasks[task_id]["progress"] = 10
+        
+        # Находим видео файл
+        video_files = [f for f in os.listdir(Config.UPLOAD_DIR) if f.startswith(video_id)]
+        if not video_files:
+            raise Exception("Видео файл не найден")
+        
+        video_path = os.path.join(Config.UPLOAD_DIR, video_files[0])
+        
+        # Извлечение аудио
+        analysis_tasks[task_id]["progress"] = 20
+        audio_path = os.path.join(Config.AUDIO_DIR, f"{video_id}.wav")
+        if not extract_audio(video_path, audio_path):
+            raise Exception("Ошибка извлечения аудио")
+        
+        # Транскрипция
+        analysis_tasks[task_id]["progress"] = 50
+        transcript_result = safe_transcribe_audio(audio_path)
+        if not transcript_result:
+            raise Exception("Ошибка транскрипции")
+        
+        # Анализ с ChatGPT
+        analysis_tasks[task_id]["progress"] = 80
+        video_duration = get_video_duration(video_path)
+        transcript_text = " ".join([word["word"] for word in transcript_result["segments"]])
+        
+        analysis_result = analyze_with_chatgpt(transcript_text, video_duration)
+        if not analysis_result:
+            # Создаем fallback хайлайты
+            analysis_result = create_fallback_highlights(video_duration, 3)
+        
+        # Завершение
+        analysis_tasks[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "completed_at": datetime.now(),
+            "result": {
+                "highlights": analysis_result["highlights"],
+                "transcript": transcript_result["segments"],
+                "video_duration": video_duration
+            }
+        })
+        
+        logger.info(f"✅ Анализ завершен: {video_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка анализа видео {video_id}: {e}")
+        analysis_tasks[task_id].update({
+            "status": "failed",
+            "error": str(e)
+        })
+
 def get_crop_parameters(width: int, height: int, format_type: str) -> dict:
     """Возвращает параметры обрезки для разных форматов"""
     formats = {
