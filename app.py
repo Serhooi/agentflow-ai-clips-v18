@@ -527,7 +527,25 @@ async def analyze_video_task(task_id: str, video_id: str):
         # Анализ с ChatGPT
         analysis_tasks[task_id]["progress"] = 80
         video_duration = get_video_duration(video_path)
-        transcript_text = " ".join([word["word"] for word in transcript_result["segments"]])
+        
+        # Правильная обработка структуры транскрипта
+        if "words" in transcript_result:
+            # Новый формат OpenAI API с word-level timestamps
+            transcript_text = " ".join([word["word"] for word in transcript_result["words"]])
+            transcript_words = transcript_result["words"]
+        elif "segments" in transcript_result:
+            # Старый формат с сегментами
+            transcript_text = " ".join([segment["text"] for segment in transcript_result["segments"]])
+            transcript_words = []
+            for segment in transcript_result["segments"]:
+                if "words" in segment:
+                    transcript_words.extend(segment["words"])
+        else:
+            # Fallback - используем текст напрямую
+            transcript_text = transcript_result.get("text", "")
+            transcript_words = []
+        
+        logger.info(f"📝 Транскрипт получен: {len(transcript_text)} символов, {len(transcript_words)} слов")
         
         analysis_result = analyze_with_chatgpt(transcript_text, video_duration)
         if not analysis_result:
@@ -541,7 +559,7 @@ async def analyze_video_task(task_id: str, video_id: str):
             "completed_at": datetime.now(),
             "result": {
                 "highlights": analysis_result["highlights"],
-                "transcript": transcript_result["segments"],
+                "transcript": transcript_words,  # Используем слова с временными метками
                 "video_duration": video_duration
             }
         })
