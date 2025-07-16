@@ -425,7 +425,7 @@ async def download_video(filename: str):
 
 @app.post("/api/clips/generate", response_model=ClipDataResponse)
 async def generate_clips_data(request: ClipGenerateRequest):
-    """Генерация клипов с нарезкой видео на бэкенде"""
+    """Генерация клипов с нарезкой видео на бэкенде (с fallback)"""
     try:
         # Проверяем что анализ завершен
         task = None
@@ -445,33 +445,78 @@ async def generate_clips_data(request: ClipGenerateRequest):
             raise HTTPException(status_code=404, detail="Видео файл не найден")
         
         video_path = os.path.join(Config.UPLOAD_DIR, video_files[0])
+        video_filename = video_files[0]
         
         # Генерируем task_id для отслеживания
         task_id = str(uuid.uuid4())
         
-        logger.info(f"🎬 Начинаем нарезку видео на клипы: {request.video_id}")
+        logger.info(f"🎬 Попытка нарезки видео на клипы: {request.video_id}")
         
-        # Нарезаем видео на клипы
-        clips_data = await cut_video_into_clips(
-            video_path=video_path,
-            highlights=result["highlights"],
-            transcript=result["transcript"],
-            video_id=request.video_id,
-            format_id=request.format_id
-        )
-        
-        logger.info(f"✅ Клипы созданы: {len(clips_data)} штук")
-        
-        return ClipDataResponse(
-            task_id=task_id,
-            video_id=request.video_id,
-            format_id=request.format_id,
-            style_id=request.style_id,
-            download_url="",  # Не используется, так как у каждого клипа свой URL
-            highlights=clips_data,  # Теперь содержит данные о клипах
-            transcript=result["transcript"],  # Полный транскрипт для справки
-            video_duration=result["video_duration"]
-        )
+        # Пытаемся нарезать видео на клипы
+        try:
+            clips_data = await cut_video_into_clips(
+                video_path=video_path,
+                highlights=result["highlights"],
+                transcript=result["transcript"],
+                video_id=request.video_id,
+                format_id=request.format_id
+            )
+            
+            if clips_data and len(clips_data) > 0:
+                logger.info(f"✅ Клипы созданы: {len(clips_data)} штук")
+                
+                return ClipDataResponse(
+                    task_id=task_id,
+                    video_id=request.video_id,
+                    format_id=request.format_id,
+                    style_id=request.style_id,
+                    download_url="",  # Не используется для клипов
+                    highlights=clips_data,  # Данные о клипах
+                    transcript=result["transcript"],
+                    video_duration=result["video_duration"]
+                )
+            else:
+                raise Exception("Не удалось создать клипы")
+                
+        except Exception as cutting_error:
+            logger.warning(f"⚠️ Ошибка нарезки видео: {cutting_error}")
+            logger.info("🔄 Переключаемся на старый режим (без нарезки)")
+            
+            # Fallback: возвращаем старый формат без нарезки
+            download_url = f"/api/videos/download/{video_filename}"
+            
+            # Подготавливаем субтитры для каждого хайлайта (без нарезки видео)
+            enhanced_highlights = []
+            for i, highlight in enumerate(result["highlights"]):
+                clip_subtitles = prepare_clip_subtitles(
+                    transcript=result["transcript"],
+                    start_time=highlight["start_time"],
+                    end_time=highlight["end_time"]
+                )
+                
+                enhanced_highlight = {
+                    **highlight,
+                    "clip_id": f"{request.video_id}_clip_{i+1}",
+                    "video_url": download_url,  # Одно видео для всех
+                    "duration": highlight["end_time"] - highlight["start_time"],
+                    "subtitles": clip_subtitles,
+                    "format_id": request.format_id,
+                    "needs_client_cutting": True  # Флаг для фронтенда
+                }
+                enhanced_highlights.append(enhanced_highlight)
+            
+            logger.info(f"📊 Подготовлены данные для генерации клипов (старый режим): {request.video_id}")
+            
+            return ClipDataResponse(
+                task_id=task_id,
+                video_id=request.video_id,
+                format_id=request.format_id,
+                style_id=request.style_id,
+                download_url=download_url,
+                highlights=enhanced_highlights,
+                transcript=result["transcript"],
+                video_duration=result["video_duration"]
+            )
         
     except HTTPException:
         raise
@@ -531,6 +576,13 @@ async def cut_video_into_clips(video_path: str, highlights: List[Dict], transcri
 def cut_video_segment(input_path: str, output_path: str, start_time: float, end_time: float, format_id: str) -> bool:
     """Нарезает сегмент видео с помощью ffmpeg"""
     try:
+        # Проверяем что ffmpeg доступен
+        try:
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.error("❌ ffmpeg не найден на сервере")
+            return False
+        
         # Получаем параметры обрезки для формата
         crop_params = get_crop_parameters_for_format(format_id)
         
@@ -548,16 +600,19 @@ def cut_video_segment(input_path: str, output_path: str, start_time: float, end_
             output_path
         ]
         
-        # Выполняем команду
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Выполняем команду с таймаутом
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
-        if result.returncode == 0:
+        if result.returncode == 0 and os.path.exists(output_path):
             logger.info(f"✅ Видео сегмент создан: {output_path}")
             return True
         else:
             logger.error(f"❌ Ошибка ffmpeg: {result.stderr}")
             return False
             
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Таймаут при нарезке видео")
+        return False
     except Exception as e:
         logger.error(f"❌ Ошибка нарезки видео: {e}")
         return False
