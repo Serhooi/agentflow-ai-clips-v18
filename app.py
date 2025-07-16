@@ -201,6 +201,26 @@ def cleanup_old_files():
         logger.error(f"Ошибка очистки файлов: {e}")
         return 0
 
+# Главная страница
+@app.get("/")
+async def root():
+    """Главная страница API"""
+    return {
+        "name": "AgentFlow AI Clips API",
+        "version": "18.6.0",
+        "status": "running",
+        "description": "Система генерации клипов с субтитрами",
+        "endpoints": {
+            "upload": "/api/videos/upload",
+            "analyze": "/api/videos/analyze", 
+            "health": "/health",
+            "stats": "/api/system/stats",
+            "docs": "/docs"
+        },
+        "memory_optimized": "512MB RAM",
+        "redis_available": REDIS_AVAILABLE
+    }
+
 # Добавляем эндпоинты для мониторинга
 @app.get("/health")
 async def health_check():
