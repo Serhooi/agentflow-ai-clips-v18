@@ -392,18 +392,30 @@ async def get_video_status(video_id: str):
 
 @app.get("/api/videos/download/{filename}")
 async def download_video(filename: str):
-    """Скачивание видео файла"""
+    """Скачивание видео файла (оригинал или клип)"""
     try:
-        file_path = os.path.join(Config.UPLOAD_DIR, filename)
+        # Сначала ищем в папке клипов
+        clip_path = os.path.join(Config.CLIPS_DIR, filename)
+        if os.path.exists(clip_path):
+            logger.info(f"📥 Скачивание клипа: {filename}")
+            return FileResponse(
+                clip_path,
+                media_type="video/mp4",
+                filename=filename
+            )
         
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Файл не найден")
+        # Если не найден в клипах, ищем в оригинальных видео
+        video_path = os.path.join(Config.UPLOAD_DIR, filename)
+        if os.path.exists(video_path):
+            logger.info(f"📥 Скачивание оригинального видео: {filename}")
+            return FileResponse(
+                video_path,
+                media_type="video/mp4",
+                filename=filename
+            )
         
-        return FileResponse(
-            file_path,
-            media_type="video/mp4",
-            filename=filename
-        )
+        # Файл не найден нигде
+        raise HTTPException(status_code=404, detail="Файл не найден")
         
     except HTTPException:
         raise
@@ -413,7 +425,7 @@ async def download_video(filename: str):
 
 @app.post("/api/clips/generate", response_model=ClipDataResponse)
 async def generate_clips_data(request: ClipGenerateRequest):
-    """Получение данных для генерации клипов на фронтенде"""
+    """Генерация клипов с нарезкой видео на бэкенде"""
     try:
         # Проверяем что анализ завершен
         task = None
@@ -432,30 +444,177 @@ async def generate_clips_data(request: ClipGenerateRequest):
         if not video_files:
             raise HTTPException(status_code=404, detail="Видео файл не найден")
         
-        video_filename = video_files[0]
-        download_url = f"/api/videos/download/{video_filename}"
+        video_path = os.path.join(Config.UPLOAD_DIR, video_files[0])
         
         # Генерируем task_id для отслеживания
         task_id = str(uuid.uuid4())
         
-        logger.info(f"📊 Подготовлены данные для генерации клипов: {request.video_id}")
+        logger.info(f"🎬 Начинаем нарезку видео на клипы: {request.video_id}")
+        
+        # Нарезаем видео на клипы
+        clips_data = await cut_video_into_clips(
+            video_path=video_path,
+            highlights=result["highlights"],
+            transcript=result["transcript"],
+            video_id=request.video_id,
+            format_id=request.format_id
+        )
+        
+        logger.info(f"✅ Клипы созданы: {len(clips_data)} штук")
         
         return ClipDataResponse(
             task_id=task_id,
             video_id=request.video_id,
             format_id=request.format_id,
             style_id=request.style_id,
-            download_url=download_url,
-            highlights=result["highlights"],
-            transcript=result["transcript"],
+            download_url="",  # Не используется, так как у каждого клипа свой URL
+            highlights=clips_data,  # Теперь содержит данные о клипах
+            transcript=result["transcript"],  # Полный транскрипт для справки
             video_duration=result["video_duration"]
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Ошибка подготовки данных для генерации клипов: {e}")
+        logger.error(f"❌ Ошибка генерации клипов: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+async def cut_video_into_clips(video_path: str, highlights: List[Dict], transcript: List[Dict], video_id: str, format_id: str) -> List[Dict]:
+    """Нарезает видео на отдельные клипы"""
+    clips_data = []
+    
+    for i, highlight in enumerate(highlights):
+        try:
+            clip_id = f"{video_id}_clip_{i+1}"
+            clip_filename = f"{clip_id}.mp4"
+            clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
+            
+            # Нарезаем видео с помощью ffmpeg
+            success = cut_video_segment(
+                input_path=video_path,
+                output_path=clip_path,
+                start_time=highlight["start_time"],
+                end_time=highlight["end_time"],
+                format_id=format_id
+            )
+            
+            if not success:
+                logger.error(f"❌ Ошибка нарезки клипа {clip_id}")
+                continue
+            
+            # Подготавливаем субтитры для этого клипа
+            clip_subtitles = prepare_clip_subtitles(
+                transcript=transcript,
+                start_time=highlight["start_time"],
+                end_time=highlight["end_time"]
+            )
+            
+            # Создаем данные клипа
+            clip_data = {
+                **highlight,  # Сохраняем оригинальные данные хайлайта
+                "clip_id": clip_id,
+                "video_url": f"/api/videos/download/{clip_filename}",
+                "duration": highlight["end_time"] - highlight["start_time"],
+                "subtitles": clip_subtitles,
+                "format_id": format_id
+            }
+            
+            clips_data.append(clip_data)
+            logger.info(f"✅ Клип создан: {clip_id} ({clip_data['duration']:.1f}s)")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания клипа {i+1}: {e}")
+            continue
+    
+    return clips_data
+
+def cut_video_segment(input_path: str, output_path: str, start_time: float, end_time: float, format_id: str) -> bool:
+    """Нарезает сегмент видео с помощью ffmpeg"""
+    try:
+        # Получаем параметры обрезки для формата
+        crop_params = get_crop_parameters_for_format(format_id)
+        
+        # Команда ffmpeg для нарезки и изменения формата
+        cmd = [
+            "ffmpeg", "-y",  # Перезаписывать файлы
+            "-i", input_path,  # Входной файл
+            "-ss", str(start_time),  # Время начала
+            "-t", str(end_time - start_time),  # Длительность
+            "-vf", f"scale={crop_params['width']}:{crop_params['height']}:force_original_aspect_ratio=increase,crop={crop_params['width']}:{crop_params['height']}",  # Обрезка под формат
+            "-c:v", "libx264",  # Видео кодек
+            "-c:a", "aac",  # Аудио кодек
+            "-preset", "fast",  # Быстрое кодирование
+            "-crf", "23",  # Качество
+            output_path
+        ]
+        
+        # Выполняем команду
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info(f"✅ Видео сегмент создан: {output_path}")
+            return True
+        else:
+            logger.error(f"❌ Ошибка ffmpeg: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка нарезки видео: {e}")
+        return False
+
+def get_crop_parameters_for_format(format_id: str) -> Dict[str, int]:
+    """Возвращает параметры обрезки для разных форматов"""
+    formats = {
+        "9x16": {"width": 720, "height": 1280},  # TikTok/Instagram Stories
+        "16x9": {"width": 1280, "height": 720},  # YouTube/Landscape
+        "1x1": {"width": 720, "height": 720},    # Instagram Post
+        "4x5": {"width": 720, "height": 900}     # Instagram Portrait
+    }
+    return formats.get(format_id, formats["9x16"])
+
+def prepare_clip_subtitles(transcript: List[Dict], start_time: float, end_time: float) -> List[Dict]:
+    """Подготавливает субтитры для конкретного клипа"""
+    # Фильтруем слова для этого временного диапазона
+    clip_words = [
+        word for word in transcript 
+        if word.get("start", 0) >= start_time and word.get("end", 0) <= end_time
+    ]
+    
+    # Корректируем время относительно начала клипа
+    adjusted_words = []
+    for word in clip_words:
+        adjusted_word = {
+            **word,
+            "start": word.get("start", 0) - start_time,
+            "end": word.get("end", 0) - start_time
+        }
+        adjusted_words.append(adjusted_word)
+    
+    # Группируем слова в субтитры по 3-5 слов
+    subtitles = group_words_into_subtitles(adjusted_words, words_per_group=4)
+    
+    logger.info(f"📝 Подготовлено {len(subtitles)} субтитров для клипа ({start_time:.1f}s - {end_time:.1f}s)")
+    
+    return subtitles
+
+def group_words_into_subtitles(words: List[Dict], words_per_group: int = 4) -> List[Dict]:
+    """Группирует слова в субтитры"""
+    subtitles = []
+    
+    for i in range(0, len(words), words_per_group):
+        group = words[i:i + words_per_group]
+        
+        if group:
+            subtitle = {
+                "id": f"subtitle_{i // words_per_group}",
+                "start": group[0].get("start", 0),
+                "end": group[-1].get("end", 0),
+                "text": " ".join(word.get("word", "") for word in group),
+                "words": group  # Для караоке эффекта
+            }
+            subtitles.append(subtitle)
+    
+    return subtitles
 
 @app.get("/api/videos/{video_id}/export-data")
 async def get_export_data(video_id: str):
