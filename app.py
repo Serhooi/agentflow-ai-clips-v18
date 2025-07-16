@@ -1,4 +1,4 @@
-# AgentFlow AI Clips v18.5.6 - Интеграция Remotion для анимированных субтитров
+# AgentFlow AI Clips v18.6.0 - Упрощенная архитектура без Remotion
 import os
 import json
 import uuid
@@ -27,6 +27,22 @@ except ImportError:
     logger = logging.getLogger("app")
     logger.warning("Supabase не установлен")
 
+# Redis интеграция (опционально)
+try:
+    import redis
+    redis_client = redis.from_url(
+        os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+        decode_responses=True
+    )
+    # Проверяем подключение
+    redis_client.ping()
+    REDIS_AVAILABLE = True
+    logger.info("✅ Redis подключен")
+except Exception as e:
+    REDIS_AVAILABLE = False
+    redis_client = None
+    logger.warning(f"⚠️ Redis недоступен: {e}")
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -37,8 +53,8 @@ logger = logging.getLogger("app")
 # Инициализация FastAPI
 app = FastAPI(
     title="AgentFlow AI Clips API",
-    description="Система генерации клипов с анимированными субтитрами через Remotion",
-    version="18.5.6"
+    description="Система генерации клипов с субтитрами",
+    version="18.6.0"
 )
 
 # CORS настройки
@@ -50,19 +66,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Конфигурация
+# Конфигурация для 512MB RAM
 class Config:
     UPLOAD_DIR = "uploads"
     AUDIO_DIR = "audio"
     CLIPS_DIR = "clips"
-    REMOTION_DIR = "remotion"
-    MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-    MAX_TASK_AGE = 24 * 60 * 60  # 24 часа
-    CLEANUP_INTERVAL = 3600  # Очистка каждый час
-    FPS = 30  # FPS для Remotion
+    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB (уменьшено для экономии памяти)
+    MAX_TASK_AGE = 2 * 60 * 60  # 2 часа (уменьшено)
+    CLEANUP_INTERVAL = 600  # Очистка каждые 10 минут
+    MAX_MEMORY_USAGE = 400 * 1024 * 1024  # 400MB лимит (оставляем 112MB для системы)
+    MAX_CONCURRENT_TASKS = 2  # Максимум 2 задачи одновременно
 
 # Создание необходимых папок
-for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR, Config.REMOTION_DIR]:
+for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 # Глобальные переменные
@@ -105,6 +121,296 @@ def init_supabase():
         return False
 
 supabase_available = init_supabase()
+
+# Функции для мониторинга памяти
+def get_memory_usage() -> Dict[str, int]:
+    """Получение информации об использовании памяти"""
+    try:
+        memory = psutil.virtual_memory()
+        process = psutil.Process()
+        return {
+            "total_mb": memory.total // (1024 * 1024),
+            "available_mb": memory.available // (1024 * 1024),
+            "used_mb": memory.used // (1024 * 1024),
+            "process_mb": process.memory_info().rss // (1024 * 1024),
+            "percent": memory.percent
+        }
+    except Exception as e:
+        logger.error(f"Ошибка получения информации о памяти: {e}")
+        return {"total_mb": 512, "available_mb": 100, "used_mb": 412, "process_mb": 50, "percent": 80}
+
+def check_memory_limit() -> bool:
+    """Проверка лимита памяти"""
+    try:
+        memory_info = get_memory_usage()
+        if memory_info["process_mb"] > (Config.MAX_MEMORY_USAGE // (1024 * 1024)):
+            logger.warning(f"⚠️ Превышен лимит памяти: {memory_info['process_mb']}MB")
+            return False
+        return True
+    except Exception:
+        return True
+
+def cleanup_old_files():
+    """Очистка старых файлов для освобождения места"""
+    try:
+        current_time = datetime.now()
+        cleaned_count = 0
+        
+        # Очистка старых видео
+        for filename in os.listdir(Config.UPLOAD_DIR):
+            file_path = os.path.join(Config.UPLOAD_DIR, filename)
+            if os.path.isfile(file_path):
+                file_time = datetime.fromtimestamp(os.path.getctime(file_path))
+                if (current_time - file_time).seconds > Config.MAX_TASK_AGE:
+                    os.remove(file_path)
+                    cleaned_count += 1
+        
+        # Очистка старых аудио файлов
+        for filename in os.listdir(Config.AUDIO_DIR):
+            file_path = os.path.join(Config.AUDIO_DIR, filename)
+            if os.path.isfile(file_path):
+                file_time = datetime.fromtimestamp(os.path.getctime(file_path))
+                if (current_time - file_time).seconds > Config.MAX_TASK_AGE:
+                    os.remove(file_path)
+                    cleaned_count += 1
+        
+        # Очистка старых клипов
+        for filename in os.listdir(Config.CLIPS_DIR):
+            file_path = os.path.join(Config.CLIPS_DIR, filename)
+            if os.path.isfile(file_path):
+                file_time = datetime.fromtimestamp(os.path.getctime(file_path))
+                if (current_time - file_time).seconds > Config.MAX_TASK_AGE:
+                    os.remove(file_path)
+                    cleaned_count += 1
+        
+        # Очистка старых задач из памяти
+        tasks_to_remove = []
+        for task_id, task in analysis_tasks.items():
+            task_age = (current_time - task["created_at"]).seconds
+            if task_age > Config.MAX_TASK_AGE:
+                tasks_to_remove.append(task_id)
+        
+        for task_id in tasks_to_remove:
+            del analysis_tasks[task_id]
+            cleaned_count += 1
+        
+        if cleaned_count > 0:
+            logger.info(f"🧹 Очищено {cleaned_count} старых файлов/задач")
+        
+        return cleaned_count
+    except Exception as e:
+        logger.error(f"Ошибка очистки файлов: {e}")
+        return 0
+
+# Добавляем эндпоинты для мониторинга
+@app.get("/health")
+async def health_check():
+    """Проверка состояния системы"""
+    try:
+        memory_info = get_memory_usage()
+        active_tasks = get_active_tasks_count()
+        
+        # Проверяем доступность ffmpeg
+        ffmpeg_available = True
+        try:
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True, timeout=5)
+        except:
+            ffmpeg_available = False
+        
+        return {
+            "status": "healthy",
+            "memory": memory_info,
+            "active_tasks": active_tasks,
+            "max_concurrent_tasks": Config.MAX_CONCURRENT_TASKS,
+            "ffmpeg_available": ffmpeg_available,
+            "supabase_available": supabase_available,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/api/system/stats")
+async def get_system_stats():
+    """Получение статистики системы"""
+    try:
+        memory_info = get_memory_usage()
+        active_tasks = get_active_tasks_count()
+        
+        # Подсчет файлов в папках
+        upload_files = len([f for f in os.listdir(Config.UPLOAD_DIR) if os.path.isfile(os.path.join(Config.UPLOAD_DIR, f))])
+        audio_files = len([f for f in os.listdir(Config.AUDIO_DIR) if os.path.isfile(os.path.join(Config.AUDIO_DIR, f))])
+        clip_files = len([f for f in os.listdir(Config.CLIPS_DIR) if os.path.isfile(os.path.join(Config.CLIPS_DIR, f))])
+        
+        return {
+            "memory": memory_info,
+            "tasks": {
+                "active": active_tasks,
+                "total": len(analysis_tasks),
+                "max_concurrent": Config.MAX_CONCURRENT_TASKS
+            },
+            "files": {
+                "uploads": upload_files,
+                "audio": audio_files,
+                "clips": clip_files
+            },
+            "config": {
+                "max_file_size_mb": Config.MAX_FILE_SIZE // (1024 * 1024),
+                "max_memory_mb": Config.MAX_MEMORY_USAGE // (1024 * 1024),
+                "cleanup_interval_min": Config.CLEANUP_INTERVAL // 60,
+                "max_task_age_hours": Config.MAX_TASK_AGE // 3600
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/system/cleanup")
+async def manual_cleanup():
+    """Ручная очистка системы"""
+    try:
+        cleaned_count = cleanup_old_files()
+        memory_info = get_memory_usage()
+        
+        return {
+            "cleaned_files": cleaned_count,
+            "memory_after_cleanup": memory_info,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/system/queue-stats")
+async def get_queue_stats():
+    """Статистика очереди задач"""
+    try:
+        queue_stats = hybrid_queue.get_queue_stats()
+        memory_info = get_memory_usage()
+        active_tasks = get_active_tasks_count()
+        
+        return {
+            "queue": queue_stats,
+            "memory": memory_info,
+            "active_tasks": active_tasks,
+            "redis_available": REDIS_AVAILABLE,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def get_active_tasks_count() -> int:
+    """Подсчет активных задач"""
+    active_count = 0
+    for task in analysis_tasks.values():
+        if task["status"] == "processing":
+            active_count += 1
+    return active_count
+
+# Гибридная система очередей (работает с Redis и без него)
+class HybridTaskQueue:
+    """Гибридная очередь задач - Redis если доступен, иначе память"""
+    
+    def __init__(self):
+        self.queue_name = "video_processing_queue"
+        self.processing_set = "processing_tasks"
+        self.results_prefix = "task_result:"
+        self.memory_queue = []  # Fallback очередь в памяти
+        self.memory_processing = set()  # Обрабатываемые задачи
+        self.memory_results = {}  # Результаты в памяти
+    
+    def add_task(self, task_data: Dict) -> str:
+        """Добавить задачу в очередь"""
+        task_id = str(uuid.uuid4())
+        task_data["task_id"] = task_id
+        task_data["created_at"] = datetime.now().isoformat()
+        
+        if REDIS_AVAILABLE:
+            try:
+                redis_client.lpush(self.queue_name, json.dumps(task_data))
+                logger.info(f"📝 Задача добавлена в Redis очередь: {task_id}")
+                return task_id
+            except Exception as e:
+                logger.error(f"❌ Ошибка Redis, используем память: {e}")
+        
+        # Fallback в память
+        self.memory_queue.append(task_data)
+        logger.info(f"📝 Задача добавлена в память: {task_id}")
+        return task_id
+    
+    def get_task(self) -> Optional[Dict]:
+        """Получить задачу из очереди"""
+        if REDIS_AVAILABLE:
+            try:
+                result = redis_client.brpop(self.queue_name, timeout=1)
+                if result:
+                    task_data = json.loads(result[1])
+                    redis_client.sadd(self.processing_set, task_data["task_id"])
+                    return task_data
+            except Exception as e:
+                logger.error(f"❌ Ошибка Redis: {e}")
+        
+        # Fallback в память
+        if self.memory_queue:
+            task_data = self.memory_queue.pop(0)
+            self.memory_processing.add(task_data["task_id"])
+            return task_data
+        
+        return None
+    
+    def complete_task(self, task_id: str, result: Dict):
+        """Завершить задачу"""
+        if REDIS_AVAILABLE:
+            try:
+                redis_client.setex(f"{self.results_prefix}{task_id}", 3600, json.dumps(result))
+                redis_client.srem(self.processing_set, task_id)
+                logger.info(f"✅ Задача завершена в Redis: {task_id}")
+                return
+            except Exception as e:
+                logger.error(f"❌ Ошибка Redis: {e}")
+        
+        # Fallback в память
+        self.memory_results[task_id] = result
+        self.memory_processing.discard(task_id)
+        logger.info(f"✅ Задача завершена в памяти: {task_id}")
+    
+    def get_task_result(self, task_id: str) -> Optional[Dict]:
+        """Получить результат задачи"""
+        if REDIS_AVAILABLE:
+            try:
+                result = redis_client.get(f"{self.results_prefix}{task_id}")
+                if result:
+                    return json.loads(result)
+            except Exception as e:
+                logger.error(f"❌ Ошибка Redis: {e}")
+        
+        # Fallback в память
+        return self.memory_results.get(task_id)
+    
+    def get_queue_stats(self) -> Dict:
+        """Статистика очереди"""
+        if REDIS_AVAILABLE:
+            try:
+                return {
+                    "queue_length": redis_client.llen(self.queue_name),
+                    "processing": redis_client.scard(self.processing_set),
+                    "redis_available": True,
+                    "mode": "redis"
+                }
+            except Exception as e:
+                logger.error(f"❌ Ошибка Redis: {e}")
+        
+        # Fallback в память
+        return {
+            "queue_length": len(self.memory_queue),
+            "processing": len(self.memory_processing),
+            "redis_available": False,
+            "mode": "memory"
+        }
+
+# Глобальная гибридная очередь
+hybrid_queue = HybridTaskQueue()
 
 # Pydantic модели
 class VideoAnalysisRequest(BaseModel):
@@ -163,11 +469,24 @@ def get_video_duration(video_path: str) -> float:
         return 60.0  # Fallback
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
-    """Извлечение аудио из видео"""
+    """Извлечение аудио из видео (оптимизировано для 512MB RAM)"""
     try:
-        cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'mp3', '-ar', '16000', '-ac', '1', '-y', audio_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Оптимизированная команда для экономии памяти
+        cmd = [
+            'ffmpeg', '-i', video_path, 
+            '-vn',  # Без видео
+            '-acodec', 'mp3', 
+            '-ar', '16000',  # Низкая частота дискретизации
+            '-ac', '1',  # Моно
+            '-ab', '64k',  # Низкий битрейт для экономии памяти
+            '-threads', '1',  # Один поток для экономии памяти
+            '-y', audio_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
         return os.path.exists(audio_path)
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Таймаут при извлечении аудио")
+        return False
     except Exception as e:
         logger.error(f"Ошибка извлечения аудио: {e}")
         return False
@@ -302,26 +621,37 @@ class ClipDataResponse(BaseModel):
 # API эндпоинты
 @app.post("/api/videos/upload", response_model=VideoUploadResponse)
 async def upload_video(file: UploadFile = File(...)):
-    """Загрузка видео файла"""
+    """Загрузка видео файла с проверкой памяти"""
     try:
+        # Проверка памяти перед загрузкой
+        if not check_memory_limit():
+            cleanup_old_files()
+            if not check_memory_limit():
+                raise HTTPException(status_code=507, detail="Недостаточно памяти на сервере")
+        
         # Проверка размера файла
         if file.size > Config.MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="Файл слишком большой")
+            raise HTTPException(status_code=413, detail=f"Файл слишком большой. Максимум {Config.MAX_FILE_SIZE // (1024*1024)}MB")
         
         # Генерация уникального ID
         video_id = str(uuid.uuid4())
         filename = f"{video_id}_{file.filename}"
         file_path = os.path.join(Config.UPLOAD_DIR, filename)
         
-        # Сохранение файла
+        # Сохранение файла чанками для экономии памяти
         with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+            while True:
+                chunk = await file.read(8192)  # Читаем по 8KB
+                if not chunk:
+                    break
+                buffer.write(chunk)
         
         # Получение длительности видео
         duration = get_video_duration(file_path)
         
-        logger.info(f"✅ Видео загружено: {filename}, размер: {file.size}, длительность: {duration}s")
+        # Логирование с информацией о памяти
+        memory_info = get_memory_usage()
+        logger.info(f"✅ Видео загружено: {filename}, размер: {file.size//1024}KB, длительность: {duration}s, память: {memory_info['process_mb']}MB")
         
         return VideoUploadResponse(
             video_id=video_id,
@@ -336,8 +666,18 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.post("/api/videos/analyze")
 async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTasks):
-    """Запуск анализа видео"""
+    """Запуск анализа видео с проверкой ресурсов"""
     try:
+        # Проверка памяти и количества активных задач
+        if not check_memory_limit():
+            cleanup_old_files()
+            if not check_memory_limit():
+                raise HTTPException(status_code=507, detail="Недостаточно памяти для анализа")
+        
+        active_tasks = get_active_tasks_count()
+        if active_tasks >= Config.MAX_CONCURRENT_TASKS:
+            raise HTTPException(status_code=429, detail=f"Слишком много активных задач ({active_tasks}). Попробуйте позже.")
+        
         task_id = str(uuid.uuid4())
         
         # Запуск фоновой задачи анализа
@@ -351,7 +691,8 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
             "progress": 0
         }
         
-        logger.info(f"🔍 Запущен анализ видео: {request.video_id}, task_id: {task_id}")
+        memory_info = get_memory_usage()
+        logger.info(f"🔍 Запущен анализ видео: {request.video_id}, task_id: {task_id}, память: {memory_info['process_mb']}MB, активных задач: {active_tasks + 1}")
         
         return {"task_id": task_id, "status": "processing"}
         
@@ -574,8 +915,13 @@ async def cut_video_into_clips(video_path: str, highlights: List[Dict], transcri
     return clips_data
 
 def cut_video_segment(input_path: str, output_path: str, start_time: float, end_time: float, format_id: str) -> bool:
-    """Нарезает сегмент видео с помощью ffmpeg"""
+    """Нарезает сегмент видео с помощью ffmpeg (оптимизировано для 512MB RAM)"""
     try:
+        # Проверяем память перед началом
+        if not check_memory_limit():
+            logger.warning("⚠️ Недостаточно памяти для нарезки видео")
+            return False
+        
         # Проверяем что ffmpeg доступен
         try:
             subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
@@ -586,22 +932,25 @@ def cut_video_segment(input_path: str, output_path: str, start_time: float, end_
         # Получаем параметры обрезки для формата
         crop_params = get_crop_parameters_for_format(format_id)
         
-        # Команда ffmpeg для нарезки и изменения формата
+        # Оптимизированная команда ffmpeg для экономии памяти
         cmd = [
             "ffmpeg", "-y",  # Перезаписывать файлы
             "-i", input_path,  # Входной файл
             "-ss", str(start_time),  # Время начала
             "-t", str(end_time - start_time),  # Длительность
-            "-vf", f"scale={crop_params['width']}:{crop_params['height']}:force_original_aspect_ratio=increase,crop={crop_params['width']}:{crop_params['height']}",  # Обрезка под формат
+            "-vf", f"scale={crop_params['width']}:{crop_params['height']}:force_original_aspect_ratio=increase,crop={crop_params['width']}:{crop_params['height']}",
             "-c:v", "libx264",  # Видео кодек
             "-c:a", "aac",  # Аудио кодек
-            "-preset", "fast",  # Быстрое кодирование
-            "-crf", "23",  # Качество
+            "-preset", "ultrafast",  # Самое быстрое кодирование (экономит память)
+            "-crf", "28",  # Более высокое сжатие для экономии места
+            "-threads", "1",  # Один поток для экономии памяти
+            "-bufsize", "1M",  # Маленький буфер
+            "-maxrate", "1M",  # Ограничение битрейта
             output_path
         ]
         
         # Выполняем команду с таймаутом
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         
         if result.returncode == 0 and os.path.exists(output_path):
             logger.info(f"✅ Видео сегмент создан: {output_path}")
@@ -808,21 +1157,45 @@ def get_crop_parameters(width: int, height: int, format_type: str) -> dict:
         "height": target["target_height"]
     }
 
-# СТАРЫЕ ФУНКЦИИ REMOTION - ЗАКОММЕНТИРОВАНЫ ДЛЯ ФРОНТЕНД ПОДХОДА
-# def render_clip_with_remotion(video_path: str, words: List[Dict], start_time: float, end_time: float, output_path: str, format_type: str) -> bool:
-#     """Рендер клипа с анимированными субтитрами через Remotion"""
-#     # Функция закомментирована - теперь субтитры накладываются на фронтенде
+# Автоматическая очистка памяти
+import threading
+import time
 
-# async def generate_clips_task(task_id: str):
-#     """Фоновая задача генерации клипов"""  
-#     # Функция закомментирована - теперь клипы генерируются на фронтенде
+def periodic_cleanup():
+    """Периодическая очистка системы"""
+    while True:
+        try:
+            time.sleep(Config.CLEANUP_INTERVAL)
+            memory_info = get_memory_usage()
+            
+            # Если память заканчивается, запускаем агрессивную очистку
+            if memory_info["process_mb"] > (Config.MAX_MEMORY_USAGE // (1024 * 1024)) * 0.8:
+                logger.warning(f"⚠️ Высокое потребление памяти: {memory_info['process_mb']}MB")
+                cleaned = cleanup_old_files()
+                logger.info(f"🧹 Автоочистка: удалено {cleaned} файлов")
+            
+        except Exception as e:
+            logger.error(f"Ошибка автоочистки: {e}")
 
+# Запуск фонового процесса очистки
+cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
+cleanup_thread.start()
 
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🚀 AgentFlow AI Clips v18.6.2 started!")
-    logger.info(f"🎬 Фронтенд подход активирован - субтитры накладываются на клиенте")
+    
+    # Логирование конфигурации для 512MB RAM
+    memory_info = get_memory_usage()
+    logger.info(f"🚀 AgentFlow AI Clips v18.6.0 запущен!")
+    logger.info(f"💾 Память: {memory_info['process_mb']}MB / {memory_info['total_mb']}MB")
+    logger.info(f"⚙️ Конфигурация для 512MB RAM:")
+    logger.info(f"   - Максимум файла: {Config.MAX_FILE_SIZE // (1024*1024)}MB")
+    logger.info(f"   - Лимит памяти: {Config.MAX_MEMORY_USAGE // (1024*1024)}MB")
+    logger.info(f"   - Максимум задач: {Config.MAX_CONCURRENT_TASKS}")
+    logger.info(f"   - Очистка каждые: {Config.CLEANUP_INTERVAL // 60} минут")
+    logger.info(f"📊 Система готова к обработке видео")
+    
     uvicorn.run(app, host="0.0.0.0", port=port)
 

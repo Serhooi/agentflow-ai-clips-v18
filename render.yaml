@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: agentflow-ai-clips
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PORT
+        value: 8000
+      - key: REDIS_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+    autoDeploy: true
+    healthCheckPath: /health
+    
+  # Опциональный Redis для масштабирования
+  # - type: redis
+  #   name: agentflow-redis
+  #   plan: starter
+  #   maxmemoryPolicy: allkeys-lru
+  
+  # Опциональные воркеры для высокой нагрузки
+  # - type: worker
+  #   name: agentflow-worker-1
+  #   env: python
+  #   plan: starter
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python worker.py
+  #   envVars:
+  #     - key: OPENAI_API_KEY
+  #       sync: false
+  #     - key: REDIS_URL
+  #       sync: false
+  #     - key: WORKER_ID
+  #       value: worker-1
