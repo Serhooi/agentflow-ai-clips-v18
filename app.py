@@ -18,13 +18,19 @@ from pydantic import BaseModel
 import openai
 from openai import OpenAI
 
+# Настройка логирования (ПЕРВЫМ ДЕЛОМ!)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("app")
+
 # Supabase Storage интеграция (опционально)
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
-    logger = logging.getLogger("app")
     logger.warning("Supabase не установлен")
 
 # Redis интеграция (опционально)
@@ -42,13 +48,6 @@ except Exception as e:
     REDIS_AVAILABLE = False
     redis_client = None
     logger.warning(f"⚠️ Redis недоступен: {e}")
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("app")
 
 # Инициализация FastAPI
 app = FastAPI(
