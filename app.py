@@ -914,11 +914,14 @@ async def cut_video_into_clips(video_path: str, highlights: List[Dict], transcri
                 end_time=highlight["end_time"]
             )
             
+            # Загружаем клип в Supabase (если доступен)
+            video_url = upload_clip_to_supabase(clip_path, clip_filename)
+            
             # Создаем данные клипа
             clip_data = {
                 **highlight,  # Сохраняем оригинальные данные хайлайта
                 "clip_id": clip_id,
-                "video_url": f"/api/videos/download/{clip_filename}",
+                "video_url": video_url,  # Используем URL из Supabase или локальный
                 "duration": highlight["end_time"] - highlight["start_time"],
                 "subtitles": clip_subtitles,
                 "format_id": format_id
