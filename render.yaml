@@ -12,6 +12,8 @@ services:
         value: 8000
       - key: MAX_FILE_SIZE_MB
         value: 250
+      - key: CLIP_DURATION_SECONDS
+        value: 30
       - key: REDIS_URL
         sync: false
       - key: SUPABASE_URL
