@@ -16,6 +16,8 @@ services:
         value: 40
       - key: CLIP_MAX_DURATION
         value: 80
+      - key: FFMPEG_TIMEOUT_MULTIPLIER
+        value: 4
       - key: REDIS_URL
         sync: false
       - key: SUPABASE_URL

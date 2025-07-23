@@ -77,6 +77,7 @@ class Config:
     MAX_CONCURRENT_TASKS = 2  # Максимум 2 задачи одновременно
     CLIP_MIN_DURATION = int(os.getenv("CLIP_MIN_DURATION", "40"))  # Минимальная длительность клипов
     CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "80"))  # Максимальная длительность клипов
+    FFMPEG_TIMEOUT_MULTIPLIER = int(os.getenv("FFMPEG_TIMEOUT_MULTIPLIER", "4"))  # Множитель таймаута для ffmpeg
 
 # Создание необходимых папок
 for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR]:
@@ -989,35 +990,56 @@ def cut_video_segment(input_path: str, output_path: str, start_time: float, end_
         # Получаем параметры обрезки для формата
         crop_params = get_crop_parameters_for_format(format_id)
         
-        # Оптимизированная команда ffmpeg для экономии памяти
+        # Оптимизированная команда ffmpeg для быстрой обработки
         cmd = [
             "ffmpeg", "-y",  # Перезаписывать файлы
+            "-ss", str(start_time),  # Время начала (ПЕРЕД входным файлом для быстрого поиска)
             "-i", input_path,  # Входной файл
-            "-ss", str(start_time),  # Время начала
             "-t", str(end_time - start_time),  # Длительность
             "-vf", f"scale={crop_params['width']}:{crop_params['height']}:force_original_aspect_ratio=increase,crop={crop_params['width']}:{crop_params['height']}",
             "-c:v", "libx264",  # Видео кодек
             "-c:a", "aac",  # Аудио кодек
-            "-preset", "ultrafast",  # Самое быстрое кодирование (экономит память)
-            "-crf", "28",  # Более высокое сжатие для экономии места
-            "-threads", "1",  # Один поток для экономии памяти
-            "-bufsize", "1M",  # Маленький буфер
-            "-maxrate", "1M",  # Ограничение битрейта
+            "-preset", "veryfast",  # Быстрое кодирование (компромисс скорость/качество)
+            "-crf", "26",  # Хорошее качество
+            "-threads", "2",  # Два потока для ускорения
+            "-avoid_negative_ts", "make_zero",  # Избегаем проблем с таймингом
             output_path
         ]
         
-        # Выполняем команду с таймаутом
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        # Выполняем команду с увеличенным таймаутом для длинных клипов
+        clip_duration = end_time - start_time
+        timeout = max(240, clip_duration * Config.FFMPEG_TIMEOUT_MULTIPLIER)  # Минимум 4 минуты или 4x длительность клипа
+        logger.info(f"🎬 Нарезка клипа {clip_duration:.1f}с с таймаутом {timeout}с")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         
         if result.returncode == 0 and os.path.exists(output_path):
             logger.info(f"✅ Видео сегмент создан: {output_path}")
             return True
         else:
-            logger.error(f"❌ Ошибка ffmpeg: {result.stderr}")
-            return False
+            logger.warning(f"⚠️ Первая попытка не удалась, пробуем упрощенную команду: {result.stderr}")
+            # Fallback: упрощенная команда без обрезки
+            simple_cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start_time),
+                "-i", input_path,
+                "-t", str(end_time - start_time),
+                "-c", "copy",  # Копируем без перекодирования
+                output_path
+            ]
+            try:
+                simple_result = subprocess.run(simple_cmd, capture_output=True, text=True, timeout=timeout//2)
+                if simple_result.returncode == 0 and os.path.exists(output_path):
+                    logger.info(f"✅ Видео сегмент создан (упрощенная команда): {output_path}")
+                    return True
+                else:
+                    logger.error(f"❌ Ошибка ffmpeg (упрощенная команда): {simple_result.stderr}")
+                    return False
+            except subprocess.TimeoutExpired:
+                logger.error(f"❌ Таймаут даже с упрощенной командой")
+                return False
             
     except subprocess.TimeoutExpired:
-        logger.error("❌ Таймаут при нарезке видео")
+        logger.error(f"❌ Таймаут при нарезке видео: {clip_duration:.1f}с клип, таймаут {timeout}с")
         return False
     except Exception as e:
         logger.error(f"❌ Ошибка нарезки видео: {e}")
