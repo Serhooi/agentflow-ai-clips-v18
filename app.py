@@ -70,10 +70,10 @@ class Config:
     UPLOAD_DIR = "uploads"
     AUDIO_DIR = "audio"
     CLIPS_DIR = "clips"
-    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB (уменьшено для экономии памяти)
-    MAX_TASK_AGE = 2 * 60 * 60  # 2 часа (уменьшено)
+    MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "250")) * 1024 * 1024  # Настраиваемый лимит
+    MAX_TASK_AGE = 4 * 60 * 60  # 4 часа (для длинных видео)
     CLEANUP_INTERVAL = 600  # Очистка каждые 10 минут
-    MAX_MEMORY_USAGE = 400 * 1024 * 1024  # 400MB лимит (оставляем 112MB для системы)
+    MAX_MEMORY_USAGE = 600 * 1024 * 1024  # 600MB лимит (для больших видео)
     MAX_CONCURRENT_TASKS = 2  # Максимум 2 задачи одновременно
 
 # Создание необходимых папок
@@ -501,7 +501,7 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
             '-threads', '1',  # Один поток для экономии памяти
             '-y', audio_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
         return os.path.exists(audio_path)
     except subprocess.TimeoutExpired:
         logger.error("❌ Таймаут при извлечении аудио")
@@ -526,9 +526,23 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
         return None
 
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
-    """Анализ транскрипта для получения 3-5 клипов"""
+    """Анализ транскрипта для получения 3-8 клипов в зависимости от длительности"""
     try:
-        target_clips = 2 if video_duration <= 30 else 3 if video_duration <= 60 else 4 if video_duration <= 120 else 5
+        # Увеличиваем количество клипов для длинных видео
+        if video_duration <= 30:
+            target_clips = 2
+        elif video_duration <= 60:
+            target_clips = 3
+        elif video_duration <= 300:  # 5 минут
+            target_clips = 4
+        elif video_duration <= 600:  # 10 минут
+            target_clips = 5
+        elif video_duration <= 1200:  # 20 минут
+            target_clips = 6
+        elif video_duration <= 1800:  # 30 минут
+            target_clips = 7
+        else:  # Больше 30 минут
+            target_clips = 8
         prompt = f"""
 Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных моментов для коротких клипов.
 
