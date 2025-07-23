@@ -75,7 +75,8 @@ class Config:
     CLEANUP_INTERVAL = 600  # Очистка каждые 10 минут
     MAX_MEMORY_USAGE = 600 * 1024 * 1024  # 600MB лимит (для больших видео)
     MAX_CONCURRENT_TASKS = 2  # Максимум 2 задачи одновременно
-    CLIP_DURATION = int(os.getenv("CLIP_DURATION_SECONDS", "30"))  # Длительность клипов в секундах (до 60 сек)
+    CLIP_MIN_DURATION = int(os.getenv("CLIP_MIN_DURATION", "40"))  # Минимальная длительность клипов
+    CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "80"))  # Максимальная длительность клипов
 
 # Создание необходимых папок
 for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR]:
@@ -545,25 +546,33 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
         else:  # Больше 30 минут
             target_clips = 8
         prompt = f"""
-Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных моментов для коротких клипов.
+Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных и ЗАКОНЧЕННЫХ моментов для клипов.
+
+Ищи:
+- Завершенные истории или мысли
+- Эмоциональные моменты с контекстом
+- Интересные факты с объяснением
+- Смешные моменты с подводкой
+- Важные выводы с аргументацией
 
 Транскрипт: {transcript_text}
 
 ТРЕБОВАНИЯ:
 1. Создай РОВНО {target_clips} клипов
-2. Каждый клип должен быть ТОЧНО {Config.CLIP_DURATION} секунд (не меньше {Config.CLIP_DURATION-3} и не больше {Config.CLIP_DURATION+2} секунд)
+2. Каждый клип должен быть от {Config.CLIP_MIN_DURATION} до {Config.CLIP_MAX_DURATION} секунд (найди ЕСТЕСТВЕННЫЕ границы интересных моментов)
 3. Клипы НЕ должны пересекаться по времени
 4. Выбирай самые яркие, эмоциональные или информативные моменты
-5. Если контента мало, равномерно распредели клипы по всему видео
-6. Время клипов должно быть в пределах 0-{video_duration:.1f} секунд
-7. ВАЖНО: Длительность каждого клипа = end_time - start_time должна быть около {Config.CLIP_DURATION} секунд
+5. ВАЖНО: Ищи законченные мысли, истории или эмоциональные моменты - не обрезай их искусственно
+6. Если момент интересный но короткий - расширь его до {Config.CLIP_MIN_DURATION} секунд
+7. Если момент очень длинный - сократи до {Config.CLIP_MAX_DURATION} секунд, сохранив суть
+8. Время клипов должно быть в пределах 0-{video_duration:.1f} секунд
 
 Верни результат СТРОГО в JSON формате:
 {{
     "highlights": [
         {{
             "start_time": 0,
-            "end_time": 30,
+            "end_time": 65,
             "title": "Интересный заголовок",
             "description": "Краткое описание содержания",
             "keywords": ["ключевое", "слово"]
@@ -590,18 +599,19 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
             # Валидация и коррекция длительности клипов
             for i, highlight in enumerate(highlights):
                 duration = highlight["end_time"] - highlight["start_time"]
-                if duration < Config.CLIP_DURATION - 5:  # Слишком короткий
-                    highlight["end_time"] = min(highlight["start_time"] + Config.CLIP_DURATION, video_duration)
-                elif duration > Config.CLIP_DURATION + 5:  # Слишком длинный
-                    highlight["end_time"] = highlight["start_time"] + Config.CLIP_DURATION
+                if duration < Config.CLIP_MIN_DURATION:  # Слишком короткий
+                    highlight["end_time"] = min(highlight["start_time"] + Config.CLIP_MIN_DURATION, video_duration)
+                elif duration > Config.CLIP_MAX_DURATION:  # Слишком длинный
+                    highlight["end_time"] = highlight["start_time"] + Config.CLIP_MAX_DURATION
                     
             if len(highlights) < target_clips:
                 logger.warning(f"ChatGPT вернул {len(highlights)} клипов вместо {target_clips}")
                 last_end = highlights[-1]["end_time"] if highlights else 0
-                while len(highlights) < target_clips and last_end + Config.CLIP_DURATION <= video_duration:
+                while len(highlights) < target_clips and last_end + Config.CLIP_MIN_DURATION <= video_duration:
+                    clip_duration = min(Config.CLIP_MAX_DURATION, video_duration - last_end - 5)
                     highlights.append({
-                        "start_time": last_end + 2,
-                        "end_time": min(last_end + Config.CLIP_DURATION, video_duration),
+                        "start_time": last_end + 5,
+                        "end_time": min(last_end + clip_duration, video_duration),
                         "title": f"Клип {len(highlights) + 1}",
                         "description": "Дополнительный клип",
                         "keywords": []
@@ -618,8 +628,8 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
 def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict:
     """Создание fallback клипов"""
     highlights = []
-    clip_duration = Config.CLIP_DURATION
-    gap = 2
+    clip_duration = (Config.CLIP_MIN_DURATION + Config.CLIP_MAX_DURATION) // 2  # Средняя длительность
+    gap = 5  # Больший промежуток между клипами
     for i in range(target_clips):
         start = i * (clip_duration + gap)
         end = start + clip_duration
