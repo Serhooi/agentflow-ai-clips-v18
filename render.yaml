@@ -21,7 +21,7 @@ services:
       - key: SUBTITLES_UPPERCASE
         value: true
       - key: SUBTITLES_WORDS_PER_GROUP
-        value: 4
+        value: 6
       - key: REDIS_URL
         sync: false
       - key: SUPABASE_URL

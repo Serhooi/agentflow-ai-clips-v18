@@ -1129,14 +1129,14 @@ def prepare_clip_subtitles(transcript: List[Dict], start_time: float, end_time: 
         adjusted_words.append(adjusted_word)
     
     # Группируем слова в субтитры (настраиваемое количество слов)
-    words_per_group = int(os.getenv("SUBTITLES_WORDS_PER_GROUP", "4"))
+    words_per_group = int(os.getenv("SUBTITLES_WORDS_PER_GROUP", "6"))
     subtitles = group_words_into_subtitles(adjusted_words, words_per_group=words_per_group)
     
     logger.info(f"📝 Подготовлено {len(subtitles)} субтитров для клипа ({start_time:.1f}s - {end_time:.1f}s)")
     
     return subtitles
 
-def group_words_into_subtitles(words: List[Dict], words_per_group: int = 4) -> List[Dict]:
+def group_words_into_subtitles(words: List[Dict], words_per_group: int = 6) -> List[Dict]:
     """Группирует слова в субтитры с поддержкой заглавных букв"""
     subtitles = []
     
