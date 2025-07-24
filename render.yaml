@@ -18,6 +18,10 @@ services:
         value: 80
       - key: FFMPEG_TIMEOUT_MULTIPLIER
         value: 4
+      - key: SUBTITLES_UPPERCASE
+        value: true
+      - key: SUBTITLES_WORDS_PER_GROUP
+        value: 4
       - key: REDIS_URL
         sync: false
       - key: SUPABASE_URL

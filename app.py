@@ -514,19 +514,74 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
         return False
 
 def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
-    """Безопасная транскрибация аудио"""
+    """Безопасная транскрибация аудио с поддержкой вставных слов"""
     try:
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 response_format="verbose_json",
-                timestamp_granularities=["word"]
+                timestamp_granularities=["word"],
+                # Промпт для включения вставных слов и междометий
+                prompt="Transcribe everything including all filler words, hesitations, and interjections: um, uh, ah, oh, hmm, yeah, yep, yes, no, like, you know, I mean, so, well, actually, basically, literally, right, okay, alright, wow, hey, man, dude, guys, folks, people, anyway, whatever, honestly, seriously, obviously, definitely, probably, maybe, perhaps, indeed, certainly, absolutely, exactly, totally, completely, really, very, quite, just, only, even, still, already, yet, now, then, here, there, this, that, these, those."
             )
-            return transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
+            result = transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
+            
+            # Постобработка для улучшения распознавания вставных слов
+            if 'words' in result:
+                result['words'] = enhance_filler_words(result['words'])
+            
+            return result
     except Exception as e:
         logger.error(f"Ошибка транскрибации: {e}")
         return None
+
+def enhance_filler_words(words: List[Dict]) -> List[Dict]:
+    """Улучшает распознавание вставных слов и междометий"""
+    enhanced_words = []
+    
+    # Словарь для исправления часто неправильно распознанных вставных слов
+    filler_corrections = {
+        'um': ['uhm', 'umm', 'uum', 'em'],
+        'uh': ['uhh', 'uuh', 'ah'],
+        'yeah': ['yah', 'yea', 'ye'],
+        'like': ['lyk', 'lik'],
+        'you know': ['ya know', 'y\'know', 'yknow'],
+        'so': ['soo', 'sooo'],
+        'well': ['wel', 'wll'],
+        'actually': ['actualy', 'acually'],
+        'basically': ['basicaly', 'basicly'],
+        'literally': ['literaly', 'literaly'],
+        'right': ['rite', 'rght'],
+        'okay': ['ok', 'okk', 'okey'],
+        'alright': ['aright', 'alrite', 'all right'],
+        'hmm': ['hm', 'hmm', 'hmmm'],
+        'oh': ['ooh', 'ohh'],
+        'wow': ['woow', 'wooow'],
+        'hey': ['hei', 'heyy'],
+        'man': ['mn'],
+        'dude': ['dud'],
+        'guys': ['gys'],
+        'folks': ['folx'],
+        'people': ['ppl', 'peple']
+    }
+    
+    for word in words:
+        word_text = word.get('word', '').strip().lower()
+        
+        # Проверяем нужно ли исправить слово
+        corrected = False
+        for correct_word, variations in filler_corrections.items():
+            if word_text in variations:
+                word['word'] = correct_word
+                corrected = True
+                break
+        
+        # Добавляем слово в результат
+        enhanced_words.append(word)
+    
+    logger.info(f"📝 Обработано {len(enhanced_words)} слов, включая вставные слова")
+    return enhanced_words
 
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
     """Анализ транскрипта для получения 3-8 клипов в зависимости от длительности"""
@@ -1073,27 +1128,42 @@ def prepare_clip_subtitles(transcript: List[Dict], start_time: float, end_time: 
         }
         adjusted_words.append(adjusted_word)
     
-    # Группируем слова в субтитры по 3-5 слов
-    subtitles = group_words_into_subtitles(adjusted_words, words_per_group=4)
+    # Группируем слова в субтитры (настраиваемое количество слов)
+    words_per_group = int(os.getenv("SUBTITLES_WORDS_PER_GROUP", "4"))
+    subtitles = group_words_into_subtitles(adjusted_words, words_per_group=words_per_group)
     
     logger.info(f"📝 Подготовлено {len(subtitles)} субтитров для клипа ({start_time:.1f}s - {end_time:.1f}s)")
     
     return subtitles
 
 def group_words_into_subtitles(words: List[Dict], words_per_group: int = 4) -> List[Dict]:
-    """Группирует слова в субтитры"""
+    """Группирует слова в субтитры с поддержкой заглавных букв"""
     subtitles = []
+    
+    # Настройка заглавных букв через переменную окружения
+    use_uppercase = os.getenv("SUBTITLES_UPPERCASE", "true").lower() == "true"
     
     for i in range(0, len(words), words_per_group):
         group = words[i:i + words_per_group]
         
         if group:
+            # Создаем копию группы для модификации
+            processed_group = []
+            for word in group:
+                processed_word = word.copy()
+                if use_uppercase and "word" in processed_word:
+                    processed_word["word"] = processed_word["word"].upper()
+                processed_group.append(processed_word)
+            
+            # Собираем текст субтитра
+            subtitle_text = " ".join(word.get("word", "") for word in processed_group)
+            
             subtitle = {
                 "id": f"subtitle_{i // words_per_group}",
                 "start": group[0].get("start", 0),
                 "end": group[-1].get("end", 0),
-                "text": " ".join(word.get("word", "") for word in group),
-                "words": group  # Для караоке эффекта
+                "text": subtitle_text,
+                "words": processed_group  # Для караоке эффекта
             }
             subtitles.append(subtitle)
     
