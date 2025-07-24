@@ -616,8 +616,96 @@ def analyze_content_type(transcript_text: str) -> str:
     
     return content_type
 
+def analyze_content_value(transcript_text: str) -> Dict:
+    """Анализирует ценность контента для аудитории"""
+    text_lower = transcript_text.lower()
+    
+    # Индикаторы высокой ценности
+    value_indicators = {
+        'actionable_advice': 0,
+        'specific_numbers': 0,
+        'personal_stories': 0,
+        'expert_insights': 0,
+        'problem_solutions': 0,
+        'surprising_facts': 0,
+        'practical_tips': 0,
+        'emotional_moments': 0
+    }
+    
+    # Слова, указывающие на практические советы
+    actionable_words = ['how to', 'step by step', 'here\'s what', 'you should', 'you need to', 'the key is', 'the secret is', 'what works', 'what doesn\'t work', 'avoid this', 'do this instead', 'try this', 'use this']
+    value_indicators['actionable_advice'] = sum(1 for word in actionable_words if word in text_lower)
+    
+    # Конкретные числа и статистика
+    import re
+    numbers = re.findall(r'\b\d+(?:\.\d+)?(?:%|percent|million|billion|thousand|dollars?|years?|months?|days?|hours?|minutes?)\b', text_lower)
+    value_indicators['specific_numbers'] = len(numbers)
+    
+    # Личные истории и опыт
+    story_words = ['when i', 'i remember', 'my experience', 'what happened', 'i learned', 'i discovered', 'i realized', 'my mistake', 'i failed', 'i succeeded']
+    value_indicators['personal_stories'] = sum(1 for word in story_words if word in text_lower)
+    
+    # Экспертные инсайты
+    expert_words = ['research shows', 'studies prove', 'data reveals', 'according to', 'experts say', 'the truth is', 'what most people don\'t know', 'insider secret', 'industry secret']
+    value_indicators['expert_insights'] = sum(1 for word in expert_words if word in text_lower)
+    
+    # Решения проблем
+    solution_words = ['solution', 'fix this', 'solve', 'problem', 'challenge', 'overcome', 'breakthrough', 'game changer', 'this changed everything']
+    value_indicators['problem_solutions'] = sum(1 for word in solution_words if word in text_lower)
+    
+    # Удивительные факты
+    surprise_words = ['surprising', 'shocking', 'unbelievable', 'amazing', 'incredible', 'you won\'t believe', 'most people think', 'contrary to', 'opposite of']
+    value_indicators['surprising_facts'] = sum(1 for word in surprise_words if word in text_lower)
+    
+    # Практические советы
+    tip_words = ['tip', 'trick', 'hack', 'shortcut', 'faster way', 'easier way', 'better way', 'pro tip', 'life hack', 'quick fix']
+    value_indicators['practical_tips'] = sum(1 for word in tip_words if word in text_lower)
+    
+    # Эмоциональные моменты
+    emotion_words = ['excited', 'frustrated', 'angry', 'happy', 'sad', 'disappointed', 'thrilled', 'nervous', 'confident', 'proud', 'embarrassed']
+    value_indicators['emotional_moments'] = sum(1 for word in emotion_words if word in text_lower)
+    
+    total_value_score = sum(value_indicators.values())
+    logger.info(f"💎 Анализ ценности контента: общий балл {total_value_score}, топ категории: {sorted(value_indicators.items(), key=lambda x: x[1], reverse=True)[:3]}")
+    
+    return value_indicators
+
+def identify_key_moments(transcript_text: str) -> List[str]:
+    """Определяет ключевые моменты в тексте"""
+    text_lower = transcript_text.lower()
+    
+    # Фразы, указывающие на важные моменты
+    key_moment_indicators = [
+        'the most important thing',
+        'here\'s the key',
+        'this is crucial',
+        'pay attention to this',
+        'this changed everything',
+        'the breakthrough moment',
+        'the turning point',
+        'what i wish i knew',
+        'the biggest mistake',
+        'the secret is',
+        'here\'s what works',
+        'the truth about',
+        'what nobody tells you',
+        'the real reason',
+        'this will blow your mind',
+        'game changer',
+        'life changing',
+        'this is huge'
+    ]
+    
+    found_moments = []
+    for indicator in key_moment_indicators:
+        if indicator in text_lower:
+            found_moments.append(indicator)
+    
+    logger.info(f"🔑 Найдено ключевых моментов: {len(found_moments)} - {found_moments[:5]}")
+    return found_moments
+
 def calculate_clip_quality_score(highlight: Dict, transcript_text: str) -> float:
-    """Рассчитывает оценку качества клипа на основе различных факторов"""
+    """Рассчитывает оценку качества клипа с фокусом на реальную ценность для аудитории"""
     score = 0.0
     
     # Базовая оценка за длительность (оптимально 45-60 секунд)
@@ -629,38 +717,67 @@ def calculate_clip_quality_score(highlight: Dict, transcript_text: str) -> float
     else:
         score += 1.0
     
-    # Оценка за вирусный потенциал
-    viral_potential = highlight.get("viral_potential", "medium").lower()
-    viral_scores = {"high": 3.0, "medium": 2.0, "low": 1.0}
-    score += viral_scores.get(viral_potential, 2.0)
+    # Оценка за практическую ценность (ГЛАВНЫЙ КРИТЕРИЙ)
+    title = highlight.get("title", "").lower()
+    description = highlight.get("description", "").lower()
+    hook = highlight.get("hook", "").lower()
+    climax = highlight.get("climax", "").lower()
     
-    # Оценка за эмоциональность
+    all_text = f"{title} {description} {hook} {climax}"
+    
+    # Высокоценные индикаторы (по 2 балла каждый)
+    high_value_indicators = [
+        "how to", "step by step", "secret", "mistake", "avoid", "solution",
+        "works", "doesn't work", "key", "important", "crucial", "breakthrough",
+        "game changer", "life changing", "truth about", "real reason"
+    ]
+    high_value_score = sum(2.0 for indicator in high_value_indicators if indicator in all_text)
+    score += min(high_value_score, 8.0)  # Максимум 8 баллов
+    
+    # Практические индикаторы (по 1.5 балла каждый)
+    practical_indicators = [
+        "tip", "trick", "hack", "advice", "recommend", "suggest",
+        "use this", "try this", "do this", "example", "case study"
+    ]
+    practical_score = sum(1.5 for indicator in practical_indicators if indicator in all_text)
+    score += min(practical_score, 6.0)  # Максимум 6 баллов
+    
+    # Эмоциональная ценность
     emotion = highlight.get("emotion", "neutral").lower()
     emotion_scores = {
-        "surprise": 3.0, "excitement": 3.0, "humor": 3.0,
-        "inspiration": 2.5, "curiosity": 2.5,
-        "interest": 2.0, "neutral": 1.0
+        "inspiration": 3.0, "surprise": 2.5, "excitement": 2.5,
+        "curiosity": 2.0, "humor": 2.0, "interest": 1.5, "neutral": 0.5
     }
     score += emotion_scores.get(emotion, 1.0)
     
-    # Оценка за качество заголовка (длина и ключевые слова)
-    title = highlight.get("title", "")
-    if len(title) > 10 and any(word in title.lower() for word in ["how", "why", "secret", "best", "top", "amazing", "shocking", "truth"]):
-        score += 1.5
-    elif len(title) > 5:
-        score += 1.0
+    # Вирусный потенциал (меньший вес, чем ценность)
+    viral_potential = highlight.get("viral_potential", "medium").lower()
+    viral_scores = {"high": 2.0, "medium": 1.0, "low": 0.5}
+    score += viral_scores.get(viral_potential, 1.0)
     
-    # Оценка за количество ключевых слов
+    # Качество заголовка с фокусом на ценность
+    value_words_in_title = sum(1 for word in ["secret", "how", "why", "best", "truth", "mistake", "avoid", "key"] if word in title)
+    score += value_words_in_title * 1.0
+    
+    # Конкретность и специфичность
     keywords = highlight.get("keywords", [])
-    score += min(len(keywords) * 0.3, 1.5)
-    
-    # Оценка за наличие хука и кульминации
-    if highlight.get("hook") and len(highlight.get("hook", "")) > 10:
-        score += 1.0
-    if highlight.get("climax") and len(highlight.get("climax", "")) > 10:
+    if len(keywords) >= 3:
+        score += 2.0
+    elif len(keywords) >= 2:
         score += 1.0
     
-    return round(score, 2)
+    # Бонус за наличие детального хука и кульминации
+    if len(hook) > 20:
+        score += 1.5
+    if len(climax) > 20:
+        score += 1.5
+    
+    # Штраф за общие фразы
+    generic_phrases = ["interesting", "good", "nice", "cool", "awesome"]
+    penalty = sum(0.5 for phrase in generic_phrases if phrase in all_text)
+    score -= min(penalty, 2.0)
+    
+    return round(max(score, 0), 2)  # Минимум 0 баллов
 
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
     """Улучшенный анализ транскрипта с продвинутым алгоритмом поиска клипов"""
@@ -683,6 +800,12 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
         
         # Анализируем контент для определения типа видео
         content_type = analyze_content_type(transcript_text)
+        
+        # Анализируем ценность контента
+        value_indicators = analyze_content_value(transcript_text)
+        
+        # Определяем ключевые моменты в тексте
+        key_moments = identify_key_moments(transcript_text)
         # Создаем специализированный промпт в зависимости от типа контента
         content_strategies = {
             'educational': """
@@ -734,35 +857,71 @@ TECH CONTENT STRATEGY:
         
         strategy = content_strategies.get(content_type, content_strategies['personal'])
         
+        # Добавляем информацию о ценности контента в промпт
+        value_context = f"""
+CONTENT VALUE ANALYSIS:
+- Actionable advice moments: {value_indicators.get('actionable_advice', 0)}
+- Specific numbers/data: {value_indicators.get('specific_numbers', 0)}
+- Personal stories: {value_indicators.get('personal_stories', 0)}
+- Expert insights: {value_indicators.get('expert_insights', 0)}
+- Problem solutions: {value_indicators.get('problem_solutions', 0)}
+- Surprising facts: {value_indicators.get('surprising_facts', 0)}
+- Practical tips: {value_indicators.get('practical_tips', 0)}
+
+KEY MOMENTS DETECTED: {', '.join(key_moments[:10]) if key_moments else 'None detected'}
+
+PRIORITY: Focus on moments with highest value density - where multiple value indicators overlap.
+"""
+        
         prompt = f"""
-You are an expert in creating viral content. Analyze this video transcript ({video_duration:.1f} seconds) and find {target_clips} MOST ENGAGING moments for short clips.
+You are a world-class content strategist with 10+ years of experience creating viral content that gets millions of views. Your job is to find the MOST VALUABLE moments that will genuinely help, entertain, or inspire the audience.
 
 CONTENT TYPE: {content_type.upper()}
 {strategy}
 
-SELECTION CRITERIA:
-- High emotional engagement moments
-- Content that makes viewers watch till the end
-- Quotable phrases and memorable lines
-- Moments that trigger reactions (surprise, laughter, agreement)
-- Content perfect for social media (TikTok, Instagram, YouTube Shorts)
+{value_context}
+
+DEEP VALUE ANALYSIS - Find moments that provide:
+1. ACTIONABLE INSIGHTS: Specific advice people can immediately use
+2. EMOTIONAL BREAKTHROUGHS: Moments that change how people think/feel
+3. SURPRISING REVELATIONS: Information that challenges common beliefs
+4. PRACTICAL SOLUTIONS: Clear answers to real problems
+5. INSPIRATIONAL MOMENTS: Stories that motivate action
+6. EXPERT SECRETS: Insider knowledge not commonly known
+7. RELATABLE STRUGGLES: Universal experiences people connect with
+8. TRANSFORMATION STORIES: Before/after moments showing change
+
+AUDIENCE VALUE FILTERS:
+- Will this moment make someone's life better?
+- Does this solve a real problem people have?
+- Is this information genuinely useful or just entertaining?
+- Would someone save/share this with friends?
+- Does this provide unique perspective or insight?
+- Can viewers apply this knowledge immediately?
 
 Transcript: {transcript_text}
 
-CLIP SELECTION CRITERIA:
-1. VIRAL POTENTIAL: Choose moments with maximum potential for shares and likes
-2. HOOK FACTOR: First 3 seconds must instantly capture attention
-3. EMOTIONAL PEAKS: Find moments of peak emotions (laughter, surprise, insight)
-4. COMPLETENESS: Each clip should be a self-contained story
-5. QUOTABILITY: Phrases people want to repeat or remember
+PREMIUM CLIP SELECTION CRITERIA:
+1. VALUE DENSITY: Maximum useful information per second
+2. IMMEDIATE APPLICABILITY: Viewers can use this knowledge today
+3. UNIQUE PERSPECTIVE: Information not available elsewhere
+4. EMOTIONAL RESONANCE: Creates genuine connection with audience
+5. PROBLEM-SOLUTION FIT: Addresses real pain points
+6. SHAREABILITY FACTOR: People will want to share with others
+7. MEMORABILITY: Key insights stick in viewer's mind
+8. TRANSFORMATION POTENTIAL: Can genuinely improve someone's situation
 
-TECHNICAL REQUIREMENTS:
-1. Create EXACTLY {target_clips} clips
+STRICT QUALITY REQUIREMENTS:
+1. Create EXACTLY {target_clips} clips - ONLY the most valuable moments
 2. Duration: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} seconds (optimal 45-60 sec)
-3. Clips must NOT overlap in time
-4. Time within 0-{video_duration:.1f} seconds
-5. Start clip with strong hook, end at peak or conclusion
-6. Avoid clips that start or end mid-sentence
+3. Each clip must provide GENUINE VALUE - not just entertainment
+4. Clips must NOT overlap in time
+5. Time within 0-{video_duration:.1f} seconds
+6. Start with immediate value proposition, end with actionable takeaway
+7. Avoid clips that start or end mid-sentence
+8. REJECT moments that are just filler or low-value content
+9. Prioritize moments where speaker provides specific, actionable advice
+10. Include concrete examples, numbers, or step-by-step instructions when possible
 
 TITLE REQUIREMENTS:
 - Use ONLY English language
@@ -838,7 +997,17 @@ Return result STRICTLY in JSON format:
             
             # Сортируем по качеству и выбираем лучшие
             optimized_highlights.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
-            highlights = optimized_highlights
+            
+            # Фильтруем только высококачественные клипы (минимум 7 баллов)
+            high_quality_clips = [clip for clip in optimized_highlights if clip.get("quality_score", 0) >= 7.0]
+            
+            if len(high_quality_clips) >= target_clips:
+                highlights = high_quality_clips[:target_clips]
+                logger.info(f"✅ Отобрано {len(highlights)} высококачественных клипов (7+ баллов)")
+            else:
+                # Если недостаточно высококачественных, берем лучшие доступные
+                highlights = optimized_highlights[:target_clips]
+                logger.warning(f"⚠️ Только {len(high_quality_clips)} клипов с высоким качеством, взяты лучшие доступные")
                     
             if len(highlights) < target_clips:
                 logger.warning(f"ChatGPT вернул {len(highlights)} клипов вместо {target_clips}")
