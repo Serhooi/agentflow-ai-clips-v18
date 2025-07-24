@@ -528,6 +528,9 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
             )
             result = transcript.model_dump() if hasattr(transcript, 'model_dump') else dict(transcript)
             
+            # Диагностика транскрипции
+            diagnose_transcript_issues(result)
+            
             # Постобработка для улучшения распознавания вставных слов
             if 'words' in result:
                 result['words'] = enhance_filler_words(result['words'])
@@ -540,6 +543,8 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
 def enhance_filler_words(words: List[Dict]) -> List[Dict]:
     """Улучшает распознавание вставных слов и междометий"""
     enhanced_words = []
+    corrections_made = 0
+    filler_words_found = 0
     
     # Словарь для исправления часто неправильно распознанных вставных слов
     filler_corrections = {
@@ -567,21 +572,31 @@ def enhance_filler_words(words: List[Dict]) -> List[Dict]:
         'people': ['ppl', 'peple']
     }
     
+    # Список всех вставных слов для подсчета
+    all_filler_words = ['um', 'uh', 'yeah', 'like', 'you know', 'so', 'well', 'actually', 'basically', 'literally', 'right', 'okay', 'alright', 'hmm', 'oh', 'wow', 'hey', 'man', 'dude', 'guys', 'folks', 'people']
+    
     for word in words:
         word_text = word.get('word', '').strip().lower()
+        original_word = word_text
         
         # Проверяем нужно ли исправить слово
         corrected = False
         for correct_word, variations in filler_corrections.items():
             if word_text in variations:
                 word['word'] = correct_word
+                corrections_made += 1
                 corrected = True
+                logger.debug(f"🔧 Исправлено: '{original_word}' → '{correct_word}'")
                 break
+        
+        # Подсчитываем вставные слова
+        if word_text in all_filler_words or any(word_text in variations for variations in filler_corrections.values()):
+            filler_words_found += 1
         
         # Добавляем слово в результат
         enhanced_words.append(word)
     
-    logger.info(f"📝 Обработано {len(enhanced_words)} слов, включая вставные слова")
+    logger.info(f"📝 Обработано {len(enhanced_words)} слов: {corrections_made} исправлений, {filler_words_found} вставных слов найдено")
     return enhanced_words
 
 def analyze_content_type(transcript_text: str) -> str:
@@ -1498,12 +1513,18 @@ def get_crop_parameters_for_format(format_id: str) -> Dict[str, int]:
     return formats.get(format_id, formats["9x16"])
 
 def prepare_clip_subtitles(transcript: List[Dict], start_time: float, end_time: float) -> List[Dict]:
-    """Подготавливает субтитры для конкретного клипа"""
-    # Фильтруем слова для этого временного диапазона
-    clip_words = [
-        word for word in transcript 
-        if word.get("start", 0) >= start_time and word.get("end", 0) <= end_time
-    ]
+    """Подготавливает субтитры для конкретного клипа с улучшенной фильтрацией"""
+    # Улучшенная фильтрация: включаем слова, которые пересекаются с временным диапазоном
+    clip_words = []
+    for word in transcript:
+        word_start = word.get("start", 0)
+        word_end = word.get("end", 0)
+        
+        # Включаем слово если оно хотя бы частично попадает в диапазон
+        if (word_start < end_time and word_end > start_time):
+            clip_words.append(word)
+    
+    logger.info(f"🔍 Найдено {len(clip_words)} слов в диапазоне {start_time:.1f}s - {end_time:.1f}s из {len(transcript)} общих слов")
     
     # Корректируем время относительно начала клипа
     adjusted_words = []
@@ -1524,11 +1545,14 @@ def prepare_clip_subtitles(transcript: List[Dict], start_time: float, end_time: 
     return subtitles
 
 def group_words_into_subtitles(words: List[Dict], words_per_group: int = 6) -> List[Dict]:
-    """Группирует слова в субтитры с поддержкой заглавных букв"""
+    """Группирует слова в субтитры с поддержкой заглавных букв и детальным логированием"""
     subtitles = []
+    total_words_processed = 0
     
     # Настройка заглавных букв через переменную окружения
     use_uppercase = os.getenv("SUBTITLES_UPPERCASE", "true").lower() == "true"
+    
+    logger.debug(f"🔤 Группировка {len(words)} слов по {words_per_group} в группе, заглавные: {use_uppercase}")
     
     for i in range(0, len(words), words_per_group):
         group = words[i:i + words_per_group]
@@ -1536,14 +1560,23 @@ def group_words_into_subtitles(words: List[Dict], words_per_group: int = 6) -> L
         if group:
             # Создаем копию группы для модификации
             processed_group = []
+            group_words = []
+            
             for word in group:
                 processed_word = word.copy()
-                if use_uppercase and "word" in processed_word:
-                    processed_word["word"] = processed_word["word"].upper()
+                word_text = word.get("word", "")
+                
+                if use_uppercase and word_text:
+                    processed_word["word"] = word_text.upper()
+                    group_words.append(word_text.upper())
+                else:
+                    group_words.append(word_text)
+                
                 processed_group.append(processed_word)
+                total_words_processed += 1
             
             # Собираем текст субтитра
-            subtitle_text = " ".join(word.get("word", "") for word in processed_group)
+            subtitle_text = " ".join(group_words)
             
             subtitle = {
                 "id": f"subtitle_{i // words_per_group}",
@@ -1553,8 +1586,68 @@ def group_words_into_subtitles(words: List[Dict], words_per_group: int = 6) -> L
                 "words": processed_group  # Для караоке эффекта
             }
             subtitles.append(subtitle)
+            
+            logger.debug(f"📝 Субтитр {len(subtitles)}: '{subtitle_text}' ({subtitle['start']:.1f}s - {subtitle['end']:.1f}s)")
     
+    logger.info(f"✅ Создано {len(subtitles)} субтитров из {total_words_processed} слов")
     return subtitles
+
+def diagnose_transcript_issues(transcript_result: Dict) -> None:
+    """Диагностирует потенциальные проблемы с транскрипцией"""
+    logger.info("🔍 ДИАГНОСТИКА ТРАНСКРИПЦИИ:")
+    
+    # Проверяем структуру данных
+    if "words" in transcript_result:
+        words = transcript_result["words"]
+        logger.info(f"📊 Найдено {len(words)} слов в формате word-level")
+        
+        # Анализируем первые 10 слов
+        sample_words = words[:10]
+        for i, word in enumerate(sample_words):
+            word_text = word.get("word", "N/A")
+            start_time = word.get("start", "N/A")
+            end_time = word.get("end", "N/A")
+            logger.debug(f"  Слово {i+1}: '{word_text}' ({start_time}s - {end_time}s)")
+        
+        # Проверяем наличие вставных слов
+        filler_words = ['um', 'uh', 'yeah', 'like', 'so', 'well', 'okay', 'right']
+        found_fillers = []
+        for word in words:
+            word_text = word.get("word", "").lower().strip()
+            if word_text in filler_words:
+                found_fillers.append(word_text)
+        
+        logger.info(f"🎤 Найдено вставных слов: {len(found_fillers)} - {list(set(found_fillers))}")
+        
+        # Проверяем временные метки
+        words_with_time = [w for w in words if w.get("start") is not None and w.get("end") is not None]
+        logger.info(f"⏰ Слов с временными метками: {len(words_with_time)}/{len(words)}")
+        
+        if len(words_with_time) < len(words):
+            logger.warning(f"⚠️ {len(words) - len(words_with_time)} слов без временных меток!")
+    
+    elif "segments" in transcript_result:
+        segments = transcript_result["segments"]
+        logger.info(f"📊 Найдено {len(segments)} сегментов")
+        
+        total_words = 0
+        for segment in segments:
+            if "words" in segment:
+                total_words += len(segment["words"])
+        
+        logger.info(f"📝 Общее количество слов в сегментах: {total_words}")
+    
+    else:
+        logger.warning("⚠️ Неизвестная структура транскрипции!")
+        logger.info(f"🔑 Доступные ключи: {list(transcript_result.keys())}")
+    
+    # Проверяем общий текст
+    if "text" in transcript_result:
+        text = transcript_result["text"]
+        logger.info(f"📄 Общий текст: {len(text)} символов")
+        logger.debug(f"📄 Начало текста: '{text[:100]}...'")
+    
+    logger.info("🔍 ДИАГНОСТИКА ЗАВЕРШЕНА")
 
 @app.get("/api/videos/{video_id}/export-data")
 async def get_export_data(video_id: str):
