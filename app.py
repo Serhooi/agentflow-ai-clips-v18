@@ -782,21 +782,40 @@ def calculate_clip_quality_score(highlight: Dict, transcript_text: str) -> float
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
     """Улучшенный анализ транскрипта с продвинутым алгоритмом поиска клипов"""
     try:
-        # Динамическое определение количества клипов
-        if video_duration <= 30:
+        # Адаптивное определение количества клипов с учетом реальности
+        if video_duration <= 60:  # До 1 минуты - только лучший момент
+            target_clips = 1
+            min_quality_threshold = 4.0  # Очень мягкие требования для коротких видео
+            logger.info(f"📹 Короткое видео ({video_duration}s) - ищем 1 лучший момент")
+        elif video_duration <= 120:  # До 2 минут - максимум 2 клипа
             target_clips = 2
-        elif video_duration <= 60:
+            min_quality_threshold = 5.0
+            logger.info(f"📹 Короткое видео ({video_duration}s) - ищем до 2 клипов")
+        elif video_duration <= 300:  # До 5 минут - максимум 3 клипа
             target_clips = 3
-        elif video_duration <= 300:  # 5 минут
+            min_quality_threshold = 6.0
+        elif video_duration <= 600:  # До 10 минут - максимум 4 клипа
             target_clips = 4
-        elif video_duration <= 600:  # 10 минут
+            min_quality_threshold = 6.5
+        elif video_duration <= 1200:  # До 20 минут - максимум 5 клипов
             target_clips = 5
-        elif video_duration <= 1200:  # 20 минут
+            min_quality_threshold = 7.0
+        elif video_duration <= 1800:  # До 30 минут - максимум 6 клипов
             target_clips = 6
-        elif video_duration <= 1800:  # 30 минут
+            min_quality_threshold = 7.5
+        else:  # Больше 30 минут - максимум 7 клипов
             target_clips = 7
-        else:  # Больше 30 минут
-            target_clips = 8
+            min_quality_threshold = 8.0
+            
+        logger.info(f"🎯 Цель: {target_clips} клипов с минимальным качеством {min_quality_threshold} баллов")
+        
+        # Проверяем, достаточно ли времени для запрошенного количества клипов
+        min_clip_duration = Config.CLIP_MIN_DURATION
+        max_possible_clips = max(1, int(video_duration / (min_clip_duration + 5)))  # +5 сек между клипами
+        
+        if target_clips > max_possible_clips:
+            target_clips = max_possible_clips
+            logger.warning(f"⚠️ Видео слишком короткое для {target_clips} клипов, скорректировано до {max_possible_clips}")
         
         # Анализируем контент для определения типа видео
         content_type = analyze_content_type(transcript_text)
@@ -911,17 +930,19 @@ PREMIUM CLIP SELECTION CRITERIA:
 7. MEMORABILITY: Key insights stick in viewer's mind
 8. TRANSFORMATION POTENTIAL: Can genuinely improve someone's situation
 
-STRICT QUALITY REQUIREMENTS:
-1. Create EXACTLY {target_clips} clips - ONLY the most valuable moments
-2. Duration: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} seconds (optimal 45-60 sec)
-3. Each clip must provide GENUINE VALUE - not just entertainment
-4. Clips must NOT overlap in time
-5. Time within 0-{video_duration:.1f} seconds
-6. Start with immediate value proposition, end with actionable takeaway
-7. Avoid clips that start or end mid-sentence
-8. REJECT moments that are just filler or low-value content
-9. Prioritize moments where speaker provides specific, actionable advice
-10. Include concrete examples, numbers, or step-by-step instructions when possible
+ADAPTIVE QUALITY REQUIREMENTS (Video: {video_duration:.1f}s, Target: {target_clips} clips):
+1. Create UP TO {target_clips} clips - prioritize QUALITY over quantity
+2. Duration: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} seconds (adapt to video length)
+3. For SHORT videos (<2min): Focus on the SINGLE best moment if needed
+4. For MEDIUM videos (2-10min): Find 2-4 distinct valuable moments
+5. For LONG videos (>10min): Find multiple high-value segments
+6. Each clip must provide GENUINE VALUE - not just entertainment
+7. Clips must NOT overlap in time
+8. Time within 0-{video_duration:.1f} seconds
+9. Start with immediate value proposition, end with actionable takeaway
+10. REJECT moments that are just filler or low-value content
+11. If video is too short for multiple clips, create ONE exceptional clip
+12. Better to have fewer HIGH-QUALITY clips than many mediocre ones
 
 TITLE REQUIREMENTS:
 - Use ONLY English language
@@ -998,30 +1019,41 @@ Return result STRICTLY in JSON format:
             # Сортируем по качеству и выбираем лучшие
             optimized_highlights.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
             
-            # Фильтруем только высококачественные клипы (минимум 7 баллов)
-            high_quality_clips = [clip for clip in optimized_highlights if clip.get("quality_score", 0) >= 7.0]
+            # Адаптивная фильтрация с учетом длительности видео
+            high_quality_clips = [clip for clip in optimized_highlights if clip.get("quality_score", 0) >= min_quality_threshold]
             
             if len(high_quality_clips) >= target_clips:
                 highlights = high_quality_clips[:target_clips]
-                logger.info(f"✅ Отобрано {len(highlights)} высококачественных клипов (7+ баллов)")
+                logger.info(f"✅ Отобрано {len(highlights)} клипов с качеством {min_quality_threshold}+ баллов")
+            elif len(high_quality_clips) > 0:
+                # Если есть хотя бы несколько качественных клипов, используем их
+                highlights = high_quality_clips
+                logger.info(f"📊 Найдено {len(highlights)} качественных клипов из {target_clips} запрошенных")
             else:
-                # Если недостаточно высококачественных, берем лучшие доступные
-                highlights = optimized_highlights[:target_clips]
-                logger.warning(f"⚠️ Только {len(high_quality_clips)} клипов с высоким качеством, взяты лучшие доступные")
+                # Для очень коротких видео или низкокачественного контента - берем лучшие доступные
+                highlights = optimized_highlights[:min(target_clips, len(optimized_highlights))]
+                logger.warning(f"⚠️ Низкое качество контента, взяты {len(highlights)} лучших доступных клипов")
                     
-            if len(highlights) < target_clips:
-                logger.warning(f"ChatGPT вернул {len(highlights)} клипов вместо {target_clips}")
+            # Для коротких видео не добавляем fallback клипы - лучше меньше, но качественнее
+            if len(highlights) < target_clips and video_duration > 300:  # Только для видео длиннее 5 минут
+                logger.warning(f"ChatGPT вернул {len(highlights)} клипов вместо {target_clips} для длинного видео")
                 last_end = highlights[-1]["end_time"] if highlights else 0
-                while len(highlights) < target_clips and last_end + Config.CLIP_MIN_DURATION <= video_duration:
-                    clip_duration = min(Config.CLIP_MAX_DURATION, video_duration - last_end - 5)
-                    highlights.append({
-                        "start_time": last_end + 5,
-                        "end_time": min(last_end + clip_duration, video_duration),
-                        "title": f"Clip {len(highlights) + 1}",
-                        "description": "Additional clip",
-                        "keywords": []
-                    })
-                    last_end = highlights[-1]["end_time"]
+                clips_to_add = min(target_clips - len(highlights), 2)  # Максимум 2 дополнительных клипа
+                
+                for i in range(clips_to_add):
+                    if last_end + Config.CLIP_MIN_DURATION + 10 <= video_duration:
+                        clip_duration = min(Config.CLIP_MAX_DURATION, video_duration - last_end - 10)
+                        highlights.append({
+                            "start_time": last_end + 10,
+                            "end_time": min(last_end + clip_duration, video_duration),
+                            "title": f"Additional Moment {len(highlights) + 1}",
+                            "description": "Additional valuable moment from the video",
+                            "keywords": [],
+                            "quality_score": min_quality_threshold - 0.5  # Чуть ниже порога
+                        })
+                        last_end = highlights[-1]["end_time"]
+            elif len(highlights) < target_clips:
+                logger.info(f"📊 Короткое видео: найдено {len(highlights)} качественных клипов из {target_clips} запрошенных - это нормально")
             # Логируем результаты анализа
             avg_quality = sum(h.get("quality_score", 0) for h in highlights) / len(highlights) if highlights else 0
             high_quality_clips = sum(1 for h in highlights if h.get("quality_score", 0) >= 7.0)
