@@ -78,6 +78,7 @@ class Config:
     CLIP_MIN_DURATION = int(os.getenv("CLIP_MIN_DURATION", "40"))  # Минимальная длительность клипов
     CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "80"))  # Максимальная длительность клипов
     FFMPEG_TIMEOUT_MULTIPLIER = int(os.getenv("FFMPEG_TIMEOUT_MULTIPLIER", "4"))  # Множитель таймаута для ffmpeg
+    CONTENT_LANGUAGE = os.getenv("CONTENT_LANGUAGE", "ru")  # Язык контента (ru/en)
 
 # Создание необходимых папок
 for directory in [Config.UPLOAD_DIR, Config.AUDIO_DIR, Config.CLIPS_DIR]:
@@ -644,7 +645,7 @@ def calculate_clip_quality_score(highlight: Dict, transcript_text: str) -> float
     
     # Оценка за качество заголовка (длина и ключевые слова)
     title = highlight.get("title", "")
-    if len(title) > 10 and any(word in title.lower() for word in ["как", "почему", "секрет", "лучший", "топ", "невероятно", "удивительно"]):
+    if len(title) > 10 and any(word in title.lower() for word in ["how", "why", "secret", "best", "top", "amazing", "shocking", "truth"]):
         score += 1.5
     elif len(title) > 5:
         score += 1.0
@@ -685,97 +686,111 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
         # Создаем специализированный промпт в зависимости от типа контента
         content_strategies = {
             'educational': """
-СТРАТЕГИЯ ДЛЯ ОБРАЗОВАТЕЛЬНОГО КОНТЕНТА:
-- Ключевые концепции и их объяснения
-- Практические примеры и кейсы
-- Пошаговые инструкции
-- Важные выводы и резюме
-- Ответы на частые вопросы
-- Демонстрации и доказательства
+EDUCATIONAL CONTENT STRATEGY:
+- Key concepts and their explanations
+- Practical examples and case studies
+- Step-by-step instructions
+- Important conclusions and summaries
+- Answers to frequently asked questions
+- Demonstrations and proofs
 """,
             'entertainment': """
-СТРАТЕГИЯ ДЛЯ РАЗВЛЕКАТЕЛЬНОГО КОНТЕНТА:
-- Самые смешные и яркие моменты
-- Неожиданные повороты и сюрпризы
-- Эмоциональные пики (смех, удивление, восторг)
-- Интересные истории с кульминацией
-- Забавные диалоги и взаимодействия
-- Моменты с высокой энергетикой
+ENTERTAINMENT CONTENT STRATEGY:
+- Funniest and brightest moments
+- Unexpected twists and surprises
+- Emotional peaks (laughter, surprise, delight)
+- Interesting stories with climax
+- Amusing dialogues and interactions
+- High-energy moments
 """,
             'business': """
-СТРАТЕГИЯ ДЛЯ БИЗНЕС-КОНТЕНТА:
-- Конкретные советы и стратегии
-- Примеры успеха и неудач
-- Цифры, статистика, результаты
-- Инсайты и откровения
-- Практические рекомендации
-- Мотивационные моменты
+BUSINESS CONTENT STRATEGY:
+- Specific advice and strategies
+- Success and failure examples
+- Numbers, statistics, results
+- Insights and revelations
+- Practical recommendations
+- Motivational moments
 """,
             'personal': """
-СТРАТЕГИЯ ДЛЯ ЛИЧНОГО КОНТЕНТА:
-- Эмоциональные истории и переживания
-- Жизненные уроки и мудрость
-- Моменты преодоления трудностей
-- Личные откровения и инсайты
-- Вдохновляющие моменты
-- Искренние эмоции и чувства
+PERSONAL CONTENT STRATEGY:
+- Emotional stories and experiences
+- Life lessons and wisdom
+- Moments of overcoming difficulties
+- Personal revelations and insights
+- Inspiring moments
+- Genuine emotions and feelings
 """,
             'tech': """
-СТРАТЕГИЯ ДЛЯ ТЕХНИЧЕСКОГО КОНТЕНТА:
-- Демонстрации новых функций
-- Объяснения сложных концепций простыми словами
-- Практические применения технологий
-- Сравнения и обзоры
-- Решения проблем и лайфхаки
-- Будущие тренды и прогнозы
+TECH CONTENT STRATEGY:
+- New feature demonstrations
+- Complex concepts explained simply
+- Practical technology applications
+- Comparisons and reviews
+- Problem solutions and life hacks
+- Future trends and predictions
 """
         }
         
         strategy = content_strategies.get(content_type, content_strategies['personal'])
         
         prompt = f"""
-Ты эксперт по созданию вирусного контента. Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} САМЫХ ЦЕПЛЯЮЩИХ моментов для коротких клипов.
+You are an expert in creating viral content. Analyze this video transcript ({video_duration:.1f} seconds) and find {target_clips} MOST ENGAGING moments for short clips.
 
-ТИП КОНТЕНТА: {content_type.upper()}
+CONTENT TYPE: {content_type.upper()}
 {strategy}
 
-ДОПОЛНИТЕЛЬНЫЕ КРИТЕРИИ ОТБОРА:
-- Моменты с высокой эмоциональной вовлеченностью
-- Контент, который заставляет досмотреть до конца
-- Фразы, которые хочется процитировать
-- Моменты, которые вызывают реакцию (удивление, смех, согласие)
-- Контент, подходящий для социальных сетей (TikTok, Instagram, YouTube Shorts)
+SELECTION CRITERIA:
+- High emotional engagement moments
+- Content that makes viewers watch till the end
+- Quotable phrases and memorable lines
+- Moments that trigger reactions (surprise, laughter, agreement)
+- Content perfect for social media (TikTok, Instagram, YouTube Shorts)
 
-Транскрипт: {transcript_text}
+Transcript: {transcript_text}
 
-КРИТЕРИИ ОТБОРА КЛИПОВ:
-1. ВИРУСНЫЙ ПОТЕНЦИАЛ: Выбирай моменты с максимальным потенциалом для репостов и лайков
-2. HOOK FACTOR: Первые 3 секунды должны мгновенно захватывать внимание
-3. ЭМОЦИОНАЛЬНЫЙ ПИКА: Ищи моменты пиковых эмоций (смех, удивление, инсайт)
-4. ЗАВЕРШЕННОСТЬ: Каждый клип должен быть самодостаточной историей
-5. ЦИТИРУЕМОСТЬ: Фразы, которые люди захотят повторить или запомнить
+CLIP SELECTION CRITERIA:
+1. VIRAL POTENTIAL: Choose moments with maximum potential for shares and likes
+2. HOOK FACTOR: First 3 seconds must instantly capture attention
+3. EMOTIONAL PEAKS: Find moments of peak emotions (laughter, surprise, insight)
+4. COMPLETENESS: Each clip should be a self-contained story
+5. QUOTABILITY: Phrases people want to repeat or remember
 
-ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ:
-1. Создай РОВНО {target_clips} клипов
-2. Длительность: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} секунд (оптимально 45-60 сек)
-3. Клипы НЕ должны пересекаться по времени
-4. Время в пределах 0-{video_duration:.1f} секунд
-5. Начинай клип с сильного хука, заканчивай на пике или выводе
-6. Избегай клипов, которые начинаются или заканчиваются посреди предложения
+TECHNICAL REQUIREMENTS:
+1. Create EXACTLY {target_clips} clips
+2. Duration: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} seconds (optimal 45-60 sec)
+3. Clips must NOT overlap in time
+4. Time within 0-{video_duration:.1f} seconds
+5. Start clip with strong hook, end at peak or conclusion
+6. Avoid clips that start or end mid-sentence
 
-Верни результат СТРОГО в JSON формате:
+TITLE REQUIREMENTS:
+- Use ONLY English language
+- Maximum 3-5 words for readability
+- Use engaging words: "Secret", "Truth About", "How", "Why", "Top", "Best", "Shocking"
+- Avoid long sentences
+- Make titles intriguing and clickable
+
+GOOD TITLE EXAMPLES:
+- "AI Success Secret"
+- "Truth About Chatbots"
+- "How AI Makes Money"
+- "Why Everyone Fears AI"
+- "Top Business Mistakes"
+
+Return result STRICTLY in JSON format:
 {{
     "highlights": [
         {{
             "start_time": 0,
             "end_time": 55,
-            "title": "Цепляющий заголовок для соцсетей",
-            "description": "Почему этот момент зацепит зрителя и заставит досмотреть",
-            "hook": "Что именно в первых секундах привлечет внимание",
-            "climax": "Кульминационный момент клипа",
+            "title": "AI Success Secret",
+            "description": "Why this moment will hook viewers and make them watch till the end",
+            "hook": "What exactly in the first seconds will grab viewer attention",
+            "climax": "Climactic moment or main insight of the clip",
             "viral_potential": "high",
             "emotion": "surprise",
-            "keywords": ["ключевое", "слово", "хештег"],
+            "keywords": ["AI", "success", "secret"],
             "best_for": ["tiktok", "instagram", "youtube_shorts"]
         }}
     ]
@@ -833,8 +848,8 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
                     highlights.append({
                         "start_time": last_end + 5,
                         "end_time": min(last_end + clip_duration, video_duration),
-                        "title": f"Клип {len(highlights) + 1}",
-                        "description": "Дополнительный клип",
+                        "title": f"Clip {len(highlights) + 1}",
+                        "description": "Additional clip",
                         "keywords": []
                     })
                     last_end = highlights[-1]["end_time"]
@@ -868,8 +883,8 @@ def create_fallback_highlights(video_duration: float, target_clips: int) -> Dict
         highlights.append({
             "start_time": start,
             "end_time": end,
-            "title": f"Клип {i+1}",
-            "description": "Автоматически созданный клип",
+            "title": f"Clip {i+1}",
+            "description": "Automatically generated clip",
             "keywords": []
         })
     return {"highlights": highlights}
