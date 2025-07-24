@@ -583,10 +583,88 @@ def enhance_filler_words(words: List[Dict]) -> List[Dict]:
     logger.info(f"📝 Обработано {len(enhanced_words)} слов, включая вставные слова")
     return enhanced_words
 
+def analyze_content_type(transcript_text: str) -> str:
+    """Анализирует тип контента для оптимизации поиска клипов"""
+    text_lower = transcript_text.lower()
+    
+    # Подсчитываем ключевые слова для разных типов контента
+    educational_keywords = ['learn', 'teach', 'explain', 'understand', 'knowledge', 'study', 'lesson', 'course', 'tutorial', 'guide', 'how to', 'step by step', 'method', 'technique', 'process', 'theory', 'concept', 'principle', 'definition', 'example']
+    entertainment_keywords = ['funny', 'hilarious', 'joke', 'laugh', 'comedy', 'entertainment', 'fun', 'amusing', 'humor', 'story', 'adventure', 'exciting', 'amazing', 'incredible', 'unbelievable', 'crazy', 'wild', 'epic', 'awesome', 'fantastic']
+    business_keywords = ['business', 'money', 'profit', 'investment', 'strategy', 'marketing', 'sales', 'growth', 'success', 'entrepreneur', 'startup', 'company', 'market', 'customer', 'revenue', 'finance', 'economy', 'industry', 'competition', 'opportunity']
+    personal_keywords = ['life', 'experience', 'personal', 'journey', 'story', 'challenge', 'overcome', 'struggle', 'achievement', 'goal', 'dream', 'motivation', 'inspiration', 'advice', 'wisdom', 'lesson learned', 'mistake', 'failure', 'success', 'growth']
+    tech_keywords = ['technology', 'software', 'app', 'digital', 'internet', 'computer', 'programming', 'code', 'development', 'innovation', 'artificial intelligence', 'ai', 'machine learning', 'data', 'algorithm', 'system', 'platform', 'tool', 'feature', 'update']
+    
+    # Подсчитываем совпадения
+    educational_score = sum(1 for keyword in educational_keywords if keyword in text_lower)
+    entertainment_score = sum(1 for keyword in entertainment_keywords if keyword in text_lower)
+    business_score = sum(1 for keyword in business_keywords if keyword in text_lower)
+    personal_score = sum(1 for keyword in personal_keywords if keyword in text_lower)
+    tech_score = sum(1 for keyword in tech_keywords if keyword in text_lower)
+    
+    # Определяем тип контента
+    scores = {
+        'educational': educational_score,
+        'entertainment': entertainment_score,
+        'business': business_score,
+        'personal': personal_score,
+        'tech': tech_score
+    }
+    
+    content_type = max(scores, key=scores.get)
+    logger.info(f"🎯 Определен тип контента: {content_type} (score: {scores[content_type]})")
+    
+    return content_type
+
+def calculate_clip_quality_score(highlight: Dict, transcript_text: str) -> float:
+    """Рассчитывает оценку качества клипа на основе различных факторов"""
+    score = 0.0
+    
+    # Базовая оценка за длительность (оптимально 45-60 секунд)
+    duration = highlight.get("duration", highlight["end_time"] - highlight["start_time"])
+    if 45 <= duration <= 60:
+        score += 2.0
+    elif 30 <= duration <= 75:
+        score += 1.5
+    else:
+        score += 1.0
+    
+    # Оценка за вирусный потенциал
+    viral_potential = highlight.get("viral_potential", "medium").lower()
+    viral_scores = {"high": 3.0, "medium": 2.0, "low": 1.0}
+    score += viral_scores.get(viral_potential, 2.0)
+    
+    # Оценка за эмоциональность
+    emotion = highlight.get("emotion", "neutral").lower()
+    emotion_scores = {
+        "surprise": 3.0, "excitement": 3.0, "humor": 3.0,
+        "inspiration": 2.5, "curiosity": 2.5,
+        "interest": 2.0, "neutral": 1.0
+    }
+    score += emotion_scores.get(emotion, 1.0)
+    
+    # Оценка за качество заголовка (длина и ключевые слова)
+    title = highlight.get("title", "")
+    if len(title) > 10 and any(word in title.lower() for word in ["как", "почему", "секрет", "лучший", "топ", "невероятно", "удивительно"]):
+        score += 1.5
+    elif len(title) > 5:
+        score += 1.0
+    
+    # Оценка за количество ключевых слов
+    keywords = highlight.get("keywords", [])
+    score += min(len(keywords) * 0.3, 1.5)
+    
+    # Оценка за наличие хука и кульминации
+    if highlight.get("hook") and len(highlight.get("hook", "")) > 10:
+        score += 1.0
+    if highlight.get("climax") and len(highlight.get("climax", "")) > 10:
+        score += 1.0
+    
+    return round(score, 2)
+
 def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optional[Dict]:
-    """Анализ транскрипта для получения 3-8 клипов в зависимости от длительности"""
+    """Улучшенный анализ транскрипта с продвинутым алгоритмом поиска клипов"""
     try:
-        # Увеличиваем количество клипов для длинных видео
+        # Динамическое определение количества клипов
         if video_duration <= 30:
             target_clips = 2
         elif video_duration <= 60:
@@ -601,37 +679,104 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
             target_clips = 7
         else:  # Больше 30 минут
             target_clips = 8
+        
+        # Анализируем контент для определения типа видео
+        content_type = analyze_content_type(transcript_text)
+        # Создаем специализированный промпт в зависимости от типа контента
+        content_strategies = {
+            'educational': """
+СТРАТЕГИЯ ДЛЯ ОБРАЗОВАТЕЛЬНОГО КОНТЕНТА:
+- Ключевые концепции и их объяснения
+- Практические примеры и кейсы
+- Пошаговые инструкции
+- Важные выводы и резюме
+- Ответы на частые вопросы
+- Демонстрации и доказательства
+""",
+            'entertainment': """
+СТРАТЕГИЯ ДЛЯ РАЗВЛЕКАТЕЛЬНОГО КОНТЕНТА:
+- Самые смешные и яркие моменты
+- Неожиданные повороты и сюрпризы
+- Эмоциональные пики (смех, удивление, восторг)
+- Интересные истории с кульминацией
+- Забавные диалоги и взаимодействия
+- Моменты с высокой энергетикой
+""",
+            'business': """
+СТРАТЕГИЯ ДЛЯ БИЗНЕС-КОНТЕНТА:
+- Конкретные советы и стратегии
+- Примеры успеха и неудач
+- Цифры, статистика, результаты
+- Инсайты и откровения
+- Практические рекомендации
+- Мотивационные моменты
+""",
+            'personal': """
+СТРАТЕГИЯ ДЛЯ ЛИЧНОГО КОНТЕНТА:
+- Эмоциональные истории и переживания
+- Жизненные уроки и мудрость
+- Моменты преодоления трудностей
+- Личные откровения и инсайты
+- Вдохновляющие моменты
+- Искренние эмоции и чувства
+""",
+            'tech': """
+СТРАТЕГИЯ ДЛЯ ТЕХНИЧЕСКОГО КОНТЕНТА:
+- Демонстрации новых функций
+- Объяснения сложных концепций простыми словами
+- Практические применения технологий
+- Сравнения и обзоры
+- Решения проблем и лайфхаки
+- Будущие тренды и прогнозы
+"""
+        }
+        
+        strategy = content_strategies.get(content_type, content_strategies['personal'])
+        
         prompt = f"""
-Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} самых интересных и ЗАКОНЧЕННЫХ моментов для клипов.
+Ты эксперт по созданию вирусного контента. Проанализируй этот транскрипт видео длительностью {video_duration:.1f} секунд и найди {target_clips} САМЫХ ЦЕПЛЯЮЩИХ моментов для коротких клипов.
 
-Ищи:
-- Завершенные истории или мысли
-- Эмоциональные моменты с контекстом
-- Интересные факты с объяснением
-- Смешные моменты с подводкой
-- Важные выводы с аргументацией
+ТИП КОНТЕНТА: {content_type.upper()}
+{strategy}
+
+ДОПОЛНИТЕЛЬНЫЕ КРИТЕРИИ ОТБОРА:
+- Моменты с высокой эмоциональной вовлеченностью
+- Контент, который заставляет досмотреть до конца
+- Фразы, которые хочется процитировать
+- Моменты, которые вызывают реакцию (удивление, смех, согласие)
+- Контент, подходящий для социальных сетей (TikTok, Instagram, YouTube Shorts)
 
 Транскрипт: {transcript_text}
 
-ТРЕБОВАНИЯ:
+КРИТЕРИИ ОТБОРА КЛИПОВ:
+1. ВИРУСНЫЙ ПОТЕНЦИАЛ: Выбирай моменты с максимальным потенциалом для репостов и лайков
+2. HOOK FACTOR: Первые 3 секунды должны мгновенно захватывать внимание
+3. ЭМОЦИОНАЛЬНЫЙ ПИКА: Ищи моменты пиковых эмоций (смех, удивление, инсайт)
+4. ЗАВЕРШЕННОСТЬ: Каждый клип должен быть самодостаточной историей
+5. ЦИТИРУЕМОСТЬ: Фразы, которые люди захотят повторить или запомнить
+
+ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ:
 1. Создай РОВНО {target_clips} клипов
-2. Каждый клип должен быть от {Config.CLIP_MIN_DURATION} до {Config.CLIP_MAX_DURATION} секунд (найди ЕСТЕСТВЕННЫЕ границы интересных моментов)
+2. Длительность: {Config.CLIP_MIN_DURATION}-{Config.CLIP_MAX_DURATION} секунд (оптимально 45-60 сек)
 3. Клипы НЕ должны пересекаться по времени
-4. Выбирай самые яркие, эмоциональные или информативные моменты
-5. ВАЖНО: Ищи законченные мысли, истории или эмоциональные моменты - не обрезай их искусственно
-6. Если момент интересный но короткий - расширь его до {Config.CLIP_MIN_DURATION} секунд
-7. Если момент очень длинный - сократи до {Config.CLIP_MAX_DURATION} секунд, сохранив суть
-8. Время клипов должно быть в пределах 0-{video_duration:.1f} секунд
+4. Время в пределах 0-{video_duration:.1f} секунд
+5. Начинай клип с сильного хука, заканчивай на пике или выводе
+6. Избегай клипов, которые начинаются или заканчиваются посреди предложения
 
 Верни результат СТРОГО в JSON формате:
 {{
     "highlights": [
         {{
             "start_time": 0,
-            "end_time": 65,
-            "title": "Интересный заголовок",
-            "description": "Краткое описание содержания",
-            "keywords": ["ключевое", "слово"]
+            "end_time": 55,
+            "title": "Цепляющий заголовок для соцсетей",
+            "description": "Почему этот момент зацепит зрителя и заставит досмотреть",
+            "hook": "Что именно в первых секундах привлечет внимание",
+            "climax": "Кульминационный момент клипа",
+            "viral_potential": "high",
+            "emotion": "surprise",
+            "keywords": ["ключевое", "слово", "хештег"],
+            "best_for": ["tiktok", "instagram", "youtube_shorts"]
         }}
     ]
 }}
@@ -652,13 +797,33 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
             result = json.loads(content)
             highlights = result.get("highlights", [])
             
-            # Валидация и коррекция длительности клипов
+            # Улучшенная валидация и оптимизация клипов
+            optimized_highlights = []
             for i, highlight in enumerate(highlights):
                 duration = highlight["end_time"] - highlight["start_time"]
-                if duration < Config.CLIP_MIN_DURATION:  # Слишком короткий
+                
+                # Коррекция длительности
+                if duration < Config.CLIP_MIN_DURATION:
                     highlight["end_time"] = min(highlight["start_time"] + Config.CLIP_MIN_DURATION, video_duration)
-                elif duration > Config.CLIP_MAX_DURATION:  # Слишком длинный
+                elif duration > Config.CLIP_MAX_DURATION:
                     highlight["end_time"] = highlight["start_time"] + Config.CLIP_MAX_DURATION
+                
+                # Добавляем метрики качества
+                highlight["quality_score"] = calculate_clip_quality_score(highlight, transcript_text)
+                highlight["duration"] = highlight["end_time"] - highlight["start_time"]
+                
+                # Устанавливаем значения по умолчанию для новых полей
+                highlight.setdefault("viral_potential", "medium")
+                highlight.setdefault("emotion", "neutral")
+                highlight.setdefault("hook", highlight.get("title", ""))
+                highlight.setdefault("climax", highlight.get("description", ""))
+                highlight.setdefault("best_for", ["youtube_shorts", "tiktok"])
+                
+                optimized_highlights.append(highlight)
+            
+            # Сортируем по качеству и выбираем лучшие
+            optimized_highlights.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+            highlights = optimized_highlights
                     
             if len(highlights) < target_clips:
                 logger.warning(f"ChatGPT вернул {len(highlights)} клипов вместо {target_clips}")
@@ -673,6 +838,12 @@ def analyze_with_chatgpt(transcript_text: str, video_duration: float) -> Optiona
                         "keywords": []
                     })
                     last_end = highlights[-1]["end_time"]
+            # Логируем результаты анализа
+            avg_quality = sum(h.get("quality_score", 0) for h in highlights) / len(highlights) if highlights else 0
+            high_quality_clips = sum(1 for h in highlights if h.get("quality_score", 0) >= 7.0)
+            
+            logger.info(f"🎯 Анализ завершен: {len(highlights)} клипов, средняя оценка: {avg_quality:.1f}, высокого качества: {high_quality_clips}")
+            
             return {"highlights": highlights}
         except json.JSONDecodeError as e:
             logger.error(f"Ошибка парсинга JSON: {e}")
