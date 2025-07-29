@@ -124,13 +124,13 @@ class VideoWorker:
             if not extract_audio(video_path, audio_path):
                 raise Exception("Ошибка извлечения аудио")
             
-            # Транскрипция
-            transcript_result = safe_transcribe_audio(audio_path)
+            # Получаем длительность видео для транскрипции
+            video_duration = get_video_duration(video_path)
+            
+            # Транскрипция (без эмоджи в worker.py по умолчанию)
+            transcript_result = safe_transcribe_audio(audio_path, False, video_duration)
             if not transcript_result:
                 raise Exception("Ошибка транскрипции")
-            
-            # Анализ с ChatGPT
-            video_duration = get_video_duration(video_path)
             
             # Обработка структуры транскрипта
             if "words" in transcript_result:

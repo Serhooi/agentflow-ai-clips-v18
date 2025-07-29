@@ -514,8 +514,8 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
         logger.error(f"Ошибка извлечения аудио: {e}")
         return False
 
-def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
-    """Безопасная транскрибация аудио с поддержкой вставных слов"""
+def safe_transcribe_audio(audio_path: str, auto_emoji: bool = False, video_duration: float = 60.0) -> Optional[Dict]:
+    """Безопасная транскрибация аудио с поддержкой вставных слов и эмоджи"""
     try:
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
@@ -534,6 +534,10 @@ def safe_transcribe_audio(audio_path: str) -> Optional[Dict]:
             # Постобработка для улучшения распознавания вставных слов
             if 'words' in result:
                 result['words'] = enhance_filler_words(result['words'])
+                
+                # Добавляем эмоджи если включена опция
+                if auto_emoji:
+                    result['words'] = addEmojisToText(result['words'], video_duration)
             
             return result
     except Exception as e:
@@ -598,6 +602,90 @@ def enhance_filler_words(words: List[Dict]) -> List[Dict]:
     
     logger.info(f"📝 Обработано {len(enhanced_words)} слов: {corrections_made} исправлений, {filler_words_found} вставных слов найдено")
     return enhanced_words
+
+def addEmojisToText(words: List[Dict], video_duration: float) -> List[Dict]:
+    """Добавляет эмоджи к тексту логично (2-4 на видео) в начале/конце предложений"""
+    if not words:
+        return words
+    
+    import re
+    import random
+    
+    # Определяем количество эмоджи на основе длительности видео
+    emoji_count = min(4, max(2, int(video_duration / 30)))  # 2-4 эмоджи в зависимости от длительности
+    
+    # Эмоджи для разных типов контента
+    content_emojis = {
+        'positive': ['😊', '👍', '✨', '🔥', '💪', '🎉', '👏', '💯', '🚀', '⭐'],
+        'educational': ['🧠', '💡', '📚', '🎯', '🔍', '💭', '🤔', '📝', '🎓', '💻'],
+        'exciting': ['🤩', '😍', '🔥', '⚡', '💥', '🎊', '🌟', '🎈', '🎁', '🏆'],
+        'thoughtful': ['🤔', '💭', '🧐', '💡', '🎯', '📖', '✍️', '🔮', '🌱', '🔑']
+    }
+    
+    # Объединяем все эмоджи для случайного выбора
+    all_emojis = []
+    for emoji_list in content_emojis.values():
+        all_emojis.extend(emoji_list)
+    
+    # Находим границы предложений (слова, заканчивающиеся на . ! ?)
+    sentence_boundaries = []
+    for i, word in enumerate(words):
+        word_text = word.get('word', '').strip()
+        if re.search(r'[.!?]$', word_text) or i == len(words) - 1:
+            sentence_boundaries.append(i)
+    
+    if not sentence_boundaries:
+        # Если нет явных границ предложений, разделим по времени
+        total_duration = words[-1].get('end', video_duration) if words else video_duration
+        segment_duration = total_duration / emoji_count
+        
+        for i in range(emoji_count):
+            target_time = (i + 1) * segment_duration
+            # Найдём ближайшее слово к этому времени
+            closest_idx = 0
+            min_diff = float('inf')
+            for j, word in enumerate(words):
+                word_time = word.get('start', 0)
+                diff = abs(word_time - target_time)
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_idx = j
+            sentence_boundaries.append(closest_idx)
+    
+    # Ограничиваем количество границ
+    if len(sentence_boundaries) > emoji_count:
+        # Выбираем равномерно распределённые границы
+        step = len(sentence_boundaries) // emoji_count
+        sentence_boundaries = [sentence_boundaries[i * step] for i in range(emoji_count)]
+    
+    # Добавляем эмоджи к выбранным словам
+    emojis_added = 0
+    used_emojis = set()
+    
+    for boundary_idx in sentence_boundaries:
+        if emojis_added >= emoji_count:
+            break
+            
+        if boundary_idx < len(words):
+            # Выбираем уникальный эмоджи
+            available_emojis = [e for e in all_emojis if e not in used_emojis]
+            if not available_emojis:
+                available_emojis = all_emojis  # Если все использованы, начинаем заново
+            
+            emoji = random.choice(available_emojis)
+            used_emojis.add(emoji)
+            
+            # Добавляем эмоджи в конец слова (после знаков препинания если есть)
+            current_word = words[boundary_idx].get('word', '').strip()
+            
+            # Проверяем, есть ли уже эмоджи в слове
+            if not re.search(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001f900-\U0001f9ff\U0001f018-\U0001f270]', current_word):
+                words[boundary_idx]['word'] = current_word + ' ' + emoji
+                emojis_added += 1
+                logger.debug(f"🎭 Добавлен эмоджи '{emoji}' к слову '{current_word}' на позиции {boundary_idx}")
+    
+    logger.info(f"🎭 Добавлено {emojis_added} эмоджи из {emoji_count} запланированных")
+    return words
 
 def analyze_content_type(transcript_text: str) -> str:
     """Анализирует тип контента для оптимизации поиска клипов"""
@@ -1114,6 +1202,7 @@ class VideoUploadResponse(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     video_id: str
+    autoEmoji: bool = False
 
 class ClipGenerateRequest(BaseModel):
     video_id: str
@@ -1193,7 +1282,7 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
         task_id = str(uuid.uuid4())
         
         # Запуск фоновой задачи анализа
-        background_tasks.add_task(analyze_video_task, task_id, request.video_id)
+        background_tasks.add_task(analyze_video_task, task_id, request.video_id, request.autoEmoji)
         
         # Сохранение статуса задачи
         analysis_tasks[task_id] = {
@@ -1689,7 +1778,7 @@ async def get_export_data(video_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Фоновая задача анализа видео
-async def analyze_video_task(task_id: str, video_id: str):
+async def analyze_video_task(task_id: str, video_id: str, auto_emoji: bool = False):
     """Фоновая задача анализа видео"""
     try:
         logger.info(f"🔍 Начат анализ видео: {video_id}")
@@ -1710,15 +1799,17 @@ async def analyze_video_task(task_id: str, video_id: str):
         if not extract_audio(video_path, audio_path):
             raise Exception("Ошибка извлечения аудио")
         
+        # Получаем длительность видео для транскрипции
+        video_duration = get_video_duration(video_path)
+        
         # Транскрипция
         analysis_tasks[task_id]["progress"] = 50
-        transcript_result = safe_transcribe_audio(audio_path)
+        transcript_result = safe_transcribe_audio(audio_path, auto_emoji, video_duration)
         if not transcript_result:
             raise Exception("Ошибка транскрипции")
         
         # Анализ с ChatGPT
         analysis_tasks[task_id]["progress"] = 80
-        video_duration = get_video_duration(video_path)
         
         # Правильная обработка структуры транскрипта
         if "words" in transcript_result:
